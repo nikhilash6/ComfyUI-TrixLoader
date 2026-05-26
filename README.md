@@ -1,6 +1,6 @@
 # ComfyUI-TrixLoader
 
-[![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](https://github.com/trx7111/ComfyUI-TrixLoader/tree/main) [![Русский](https://img.shields.io/badge/Язык-Русский-red?style=for-the-badge)](https://github.com/trx7111/ComfyUI-TrixLoader/tree/ru)
+[![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](README.md) [![Русский](https://img.shields.io/badge/Язык-Русский-red?style=for-the-badge)](README_RU.md)
 
 A universal, stylish, and multi-functional (All-in-One) image loader for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Load, crop, mask, and scale images directly within a single convenient interface.
 
