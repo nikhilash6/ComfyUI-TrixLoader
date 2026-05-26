@@ -1,171 +1,173 @@
 # ComfyUI-TrixLoader
 
-Универсальный, стильный и многофункциональный загрузчик изображений (All-in-One) для [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Загружайте, кадрируйте, маскируйте и масштабируйте изображения прямо внутри одного удобного интерфейса.
+[![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](README.md) [![Русский](https://img.shields.io/badge/Язык-Русский-red?style=for-the-badge)](README_RU.md)
+
+A universal, stylish, and multi-functional (All-in-One) image loader for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Load, crop, mask, and scale images directly within a single convenient interface.
 
 ![ComfyUI-TrixLoader Banner](preview.png)
 
 ---
 
-## 📌 Содержание
-1. [🌟 Основные особенности](#-основные-особенности)
-2. [🔌 Входы и выходы](#-входы-и-выходы)
-3. [⚙️ Режимы работы (Подробный разбор)](#-режимы-работы-подробный-разбор)
-4. [⌨️ Фишки и горячие клавиши (Shortcuts)](#️-фишки-и-горячие-клавиши-shortcuts)
-5. [🔄 Последние обновления](#-последние-обновления)
-6. [🛠️ Установка](#️-установка)
+## 📌 Table of Contents
+1. [🌟 Key Features](#-key-features)
+2. [🔌 Inputs and Outputs](#-inputs-and-outputs)
+3. [⚙️ Operation Modes (Detailed Breakdown)](#-operation-modes-detailed-breakdown)
+4. [⌨️ Tricks and Shortcuts](#️-tricks-and-shortcuts)
+5. [🔄 Recent Updates](#-recent-updates)
+6. [🛠️ Installation](#️-installation)
 
 ---
 
-## 🌟 Основные особенности
+## 🌟 Key Features
 
-- **Всё в одном (All-in-One)**: Больше не нужно плодить кучу нод для загрузки, обрезки, цветокоррекции и изменения размера.
-- **Встроенный Crop-редактор**: Интерактивная рамка обрезки кадра прямо на холсте ноды.
-- **Умное маскирование**: Рисование масок кистью с полной поддержкой истории (Отмена/Повтор) и масштабирования.
-- **Профессиональная цветокоррекция**: Ползунки экспозиции, контраста, светлых/темных участков, температуры цвета, красочности, виньетирования и HSL.
+- **All-in-One**: No more cluttering the graph with separate nodes for loading, cropping, color grading, and resizing.
+- **Built-in Crop Editor**: Interactive crop frame directly on the node canvas.
+- **Smart Masking**: Brush masking with full Undo/Redo history and zoom support.
+- **Professional Color Grading**: Controls for exposure, contrast, highlights/shadows, color temperature, vibrance, vignetting, and HSL.
 
 ---
 
-## 🔌 Входы и выходы
+## 🔌 Inputs and Outputs
 
-Визуальное отображение ноды и её подключений в графе ComfyUI:
+Visual representation of the node and its connections in the ComfyUI graph:
 
 ![Inputs and Outputs Connection](assets/inimage_inmask_v2.png)
 
-### Входные порты:
-1. **in_image** *(необязательный)* — внешнее входящее изображение для обработки.
-2. **in_mask** *(необязательный)* — внешняя входящая маска.
+### Input Ports:
+1. **in_image** *(optional)* — external incoming image for processing.
+2. **in_mask** *(optional)* — external incoming mask.
 
-### Выходные порты:
-1. **IMAGE** — финальное обработанное изображение (с учетом обрезки, цветокоррекции и изменения размера).
-2. **MASK** — сгенерированная маска (нарисованная вручную или переданная со входа).
-3. **original_input** — сырое, необработанное исходное изображение. 
-   - *Примечание*: Если на вход ноды `in_image` подается внешнее изображение, этот порт автоматически переходит в статус `blocked` (заблокирован), предотвращая логические ошибки.
+### Output Ports:
+1. **IMAGE** — final processed image (including crop, color grading, and scaling).
+2. **MASK** — generated mask (drawn manually or passed from the input).
+3. **original_input** — raw, unprocessed source image.
+   - *Note*: If an external image is fed into the `in_image` port, this port is automatically `blocked` to prevent logical feedback loop errors.
 
 ---
 
-## ⚙️ Режимы работы (Подробный разбор)
+## ⚙️ Operation Modes (Detailed Breakdown)
 
-Возможности ноды разделены на 3 переключаемых режима, которые всегда доступны на панели управления.
+The node's capabilities are divided into 3 switchable modes, always accessible on the control toolbar.
 
-### 🎬 1. Режим BASE (Базовая загрузка и цветокоррекция)
+### 🎬 1. BASE Mode (Basic Loading & Color Grading)
 
-Этот режим предназначен для стандартной загрузки изображений и их базовой обработки. Вы можете тонко настроить цвета, экспозицию и контраст перед передачей изображения дальше по графу. В расширенное меню Base с настройками обработки можно зайти по двойному нажатию на кнопку Base, выход из меню выполняется аналогичным способом.
+This mode is designed for standard image loading and basic processing. You can fine-tune colors, exposure, and contrast before passing the image down the graph. Double-click the **Base** tab to enter the advanced processing settings panel; double-click it again to exit.
 
-| Стандартный режим Base | Панель управления (BASE) |
+| Standard Base Mode | Control Toolbar (BASE) |
 | :---: | :---: |
 | ![Base Mode Standard](assets/base.png) | ![BASE Toolbar](assets/base_bar.png) |
 
-#### Дополнительный интерфейс Camera Raw и Кривых:
-Вы можете открыть профессиональную панель Camera Raw с расширенной коррекцией цвета, гибкой настройкой HSL-каналов и графиков кривых (Curves) по нажатию на кнопку **open live camera raw**.
+#### Live Camera Raw & Curves Interface:
+Click the **open live camera raw** button to access a professional Camera Raw panel with advanced color correction, HSL adjustments, and Curve charts.
 
-| Панель Camera Raw | Настройка кривых и HSL |
+| Camera Raw Panel | Curves & HSL Settings |
 | :---: | :---: |
 | ![Camera Raw Overview](assets/camera_raw.png) | ![Camera Raw Curves & HSL](assets/camera_raw_curves_hs.png) |
 
 ---
 
-### 🖌️ 2. Режим MASK (Рисование масок)
+### 🖌️ 2. MASK Mode (Mask Drawing)
 
-Режим со встроенным графическим редактором масок. Позволяет быстро нарисовать маску для инпейнтинга (Inpainting) прямо внутри ноды. 
+A mode with a built-in graphic mask editor. Allows you to quickly paint an inpainting mask right inside the node.
 
-По двойному нажатию на кнопку mask мы переходим в полноэкранный режим редактора масок, выход из редактора выполняется аналогичным способом.
+Double-click the **mask** tab to enter the full-screen mask editor; double-click it again to exit.
 
-| Панель управления (MASK) | Холст редактора масок |
+| Control Toolbar (MASK) | Mask Editor Canvas |
 | :---: | :---: |
 | ![MASK Toolbar](assets/mask_bar.png) | ![MASK Canvas](assets/mask_canvas.png) |
 
-#### Доступные инструменты:
-* **Цвет маски** (визуальный выбор цвета отображения на холсте). *Примечание: цвет маски не влияет на выходную маску (на выходе MASK всегда формируется стандартная черно-белая маска).*
-* **Глазок** (включение/выключение видимости нарисованной маски на холсте).
-* **Кнопки Отмена и Повтор** (Undo / Redo) — полная история действий для точного рисования.
-* **Стерка** (ластик для стирания нарисованной маски).
-* **Корзина** (полная очистка холста маски).
-* **Ползунки** — плавное изменение размера и жесткости кисти.
+#### Available Tools:
+* **Mask Color** (visual selection of the mask display color on the canvas). *Note: The display color does not affect the output mask (the MASK output is always a standard black-and-white mask).*
+* **Eye Icon** (toggles mask visibility on the canvas).
+* **Undo / Redo Buttons** — full action history for precise painting.
+* **Eraser** (removes painted mask content).
+* **Trash Icon** (clears the entire mask canvas).
+* **Sliders** — smooth adjustment of brush size and hardness.
 
 ---
 
-### 📐 3. Режим RESIZE (Изменение размера и масштабирование)
+### 📐 3. RESIZE Mode (Resizing & Scaling)
 
-Профессиональный инструмент изменения разрешения изображения с возможностью сохранения пропорций и умного заполнения полей (Padding).
+A professional tool to resize image resolution with aspect ratio locking and smart padding options.
 
-| Панель управления (RESIZE) | Опции масштабирования |
+| Control Toolbar (RESIZE) | Scaling Options |
 | :---: | :---: |
 | ![RESIZE Toolbar](assets/resize_bar.png) | ![RESIZE Options](assets/options_resizebar_v3.png) |
 
 ---
 
-## ⌨️ Фишки и горячие клавиши (Shortcuts)
+## ⌨️ Tricks and Shortcuts
 
-Нода оснащена множеством горячих клавиш и скрытых функций для максимального ускорения вашей работы.
+The node is equipped with numerous hotkeys and hidden features to accelerate your workflow.
 
-| Интерактивный Crop-редактор | Автомаскирование Outpaint | Контекстное меню ноды |
+| Interactive Crop Editor | Auto-mask Outpaint | Context Menu |
 | :---: | :---: | :---: |
 | ![Crop Editor View](assets/cpo_editor.png) | ![Auto-mask Outpaint](assets/crop_automask.png) | ![Context Options](assets/context_options.png) |
 
-### 🎨 Редактор Масок (Mask Mode)
-* <kbd>Alt</kbd> + **Правый клик** + **Драг (Перетаскивание)** — интерактивное изменение размера кисти (по горизонтали) и жесткости кисти (по вертикали) прямо на холсте.
-* <kbd>Ctrl</kbd> + **Левый клик** — умная заливка замкнутых областей маски (Flood Fill).
-* <kbd>Shift</kbd> + **Левый клик** — рисует прямую линию от предыдущей точки рисования до текущего клика. Если зажать Shift и вести мышь, линия защелкнется ровно по вертикали или горизонтали.
-* **Колесико мыши** — приближение (Zoom) холста в полноэкранном режиме.
-* **Средняя кнопка мыши (Клик на колесико) + Драг** — свободное панорамирование (Pan) по холсту.
-* <kbd>Esc</kbd> — быстрый выход из полноэкранного режима маскирования.
+### 🎨 Mask Editor (Mask Mode)
+* <kbd>Alt</kbd> + **Right Click** + **Drag** — interactively adjust brush size (horizontal movement) and hardness (vertical movement) directly on the canvas.
+* <kbd>Ctrl</kbd> + **Left Click** — smart flood fill of enclosed mask areas.
+* <kbd>Shift</kbd> + **Left Click** — draws a straight line from the last painted point to the current click. Holding Shift while dragging locks the line to vertical or horizontal axes.
+* **Mouse Wheel** — Zoom in/out of the canvas in full-screen mode.
+* **Middle Mouse Click / Wheel Click + Drag** — pan around the canvas.
+* <kbd>Esc</kbd> — quickly exit the full-screen masking mode.
 
-### 📐 Редактор Обрезки (Crop Editor) & Outpaint
-* **Автомаскирование для Outpaint** — при активации тумблера `Auto-Mask Outpaint` области за пределами оригинального кадра автоматически преобразуются в маску.
-* **Feathering (Размытие краев)** — регулятор размытия позволяет задать плавный градиентный переход на краях маски outpaint, обеспечивая бесшовное слияние сгенерированной области.
-* <kbd>Shift</kbd> + **Драг за угол рамки** — принудительно включает фиксированное соотношение сторон при кадрировании.
-* <kbd>Alt</kbd> + **Драг за угол рамки** — масштабирует рамку обрезки симметрично во все стороны относительно её центра.
-* **Pixel Snap (Выравнивание по пикселям)** — кнопки `None`, `x2`, `x4`, `x8`, `x32`, `x64` автоматически округляют ширину, высоту и координаты обрезки под заданный шаг пикселей для идеального рендеринга.
-* **Колесико мыши** — приближение (Zoom) рабочей области.
-* **Средняя кнопка мыши / Alt + Левый клик + Драг** — панорамирование холста.
-* <kbd>Esc</kbd> — закрыть редактор без сохранения изменений.
+### 📐 Crop Editor & Outpaint
+* **Auto-Mask Outpaint** — when toggled on, areas outside the original frame are automatically converted into a mask.
+* **Feathering** — smooth outpaint mask edges for seamless blending.
+* <kbd>Shift</kbd> + **Drag Corner Handle** — forces a locked aspect ratio during cropping.
+* <kbd>Alt</kbd> + **Drag Corner Handle** — scales the crop frame symmetrically relative to its center.
+* **Pixel Snap** — `None`, `x2`, `x4`, `x8`, `x32`, `x64` buttons round the dimensions and coordinates to the selected step for perfect rendering.
+* **Mouse Wheel** — Zoom in/out of the workspace.
+* **Middle Click / Alt + Left Click + Drag** — pan around the canvas.
+* <kbd>Esc</kbd> — close the editor without saving changes.
 
-### 📋 Контекстное меню и буфер обмена масок
-* **Копирование и вставка масок вручную** — в контекстном меню ноды (вызывается правым кликом) доступны встроенные команды `Copy Mask` (Копировать маску) и `Paste Mask` (Вставить маску). Это позволяет мгновенно переносить нарисованную маску между различными нодами проекта, не создавая лишних связей на холсте ComfyUI.
+### 📋 Context Menu & Mask Clipboard
+* **Copy and Paste Masks** — the node's context menu (right-click) includes built-in `Copy Mask` and `Paste Mask` commands. This allows you to instantly transfer masks between nodes without manual routing.
 
-### ⚡ Быстрый сброс и действия (Двойной клик)
-* **Двойной клик на слайдеры и параметры** — дважды кликните по любому ползунку, числовому полю ввода или названию параметра, чтобы мгновенно сбросить его значение к стандартному (работает как в основном интерфейсе ноды, так и во всех ползунках Camera Raw / HSL).
-* **Двойной клик по вкладке `Mask`** — быстрое переключение полноэкранного режима рисования маски (разворачивание/сворачивание холста).
-* **Двойной клик по вкладке `Base`** — быстрое открытие или скрытие панели Camera Raw.
+### ⚡ Quick Reset & Actions (Double-Click)
+* **Double-Click sliders & values** — double-click any slider, numerical input, or label to instantly reset it to its default value (works on both node controls and Camera Raw panel).
+* **Double-Click `Mask` tab** — toggle full-screen masking mode.
+* **Double-Click `Base` tab** — toggle Camera Raw panel.
 
-### 🌡️ Панель Camera Raw (Цветокоррекция)
-* **HSL Пипетка (Иконка пальца)** — кликните по любому оттенку на изображении и ведите мышь влево или вправо. Программа автоматически выберет данный цвет и уменьшит/увеличит его насыщенность по всему кадру.
-* **Double Click на графике кривых** — сбрасывает выбранную кривую канала (RGB/Red/Green/Blue) в линейный вид.
-* **Правый клик по точке на кривой** — удаляет точку с графика.
-* **Колесико мыши / Средняя кнопка мыши** — зум и перемещение изображения для удобного просмотра деталей при цветокоррекции.
-* <kbd>Esc</kbd> — закрыть редактор без сохранения.
-
----
-
-## 🔄 Последние обновления
-
-* **Улучшение рисования масок**: Добавлена поддержка правой кнопки мыши (ПКМ) — удержание ПКМ теперь динамически работает как ластик (стёрка) для быстрого редактирования маски.
-* **Обновления в CPO Editor**:
-  - Увеличена сила прилипания к границам изображения в 2 раза для более точной и жесткой фиксации кроп-рамки.
-  - Добавлена панель выравнивания (**Alignment**) с пресетами быстрого позиционирования кроп-области (`Top-left`, `Center crop`, `Bottom-right` и др.).
-  - Добавлены функции зеркального отражения (по горизонтали/вертикали) и поворота изображения на 90° (по/против часовой стрелки).
-  - Сделана прокрутка боковой панели редактора для удобной работы на экранах с низким разрешением.
-* **Интеграция цвета заливки с Outpaint**: Добавлена палитра из 7 стандартных цветов и радужной кнопки выбора кастомного цвета. Выбранный цвет фона теперь сохраняется и применяется при использовании режима `pad_for_outpainting`.
+### 🌡️ Camera Raw Panel (Color Grading)
+* **HSL Color Picker (Finger Icon)** — click and drag horizontally on any color in the image to dynamically adjust the saturation of that color range.
+* **Double-Click on Curve** — resets the selected channel curve (RGB/Red/Green/Blue) to linear.
+* **Right-Click on Curve point** — deletes the selected point.
+* **Mouse Wheel / Middle Click** — zoom and pan the image for close inspection.
+* <kbd>Esc</kbd> — close the editor without saving.
 
 ---
 
-## 🛠️ Установка
+## 🔄 Recent Updates
 
-### Способ 1: Вручную через Git
-1. Откройте консоль в вашей папке ComfyUI:
+* **Mask Editor Improvements**: Added right-click (RMB) eraser support — hold RMB to dynamically erase mask paths for quick edits.
+* **CPO Editor Enhancements**:
+  - Doubled the border snap strength for precise locking of the crop boundaries.
+  - Added an **Alignment** panel with quick presets (`Top-left`, `Center crop`, `Bottom-right`, etc.).
+  - Added image mirroring (horizontal/vertical) and 90° rotation (CW/CCW).
+  - Added scroll support to the sidebar for smaller screens.
+* **Outpaint Color Integration**: Added a color palette of 7 standard colors + custom rainbow picker. The selected fill color is now used by `pad_for_outpainting`.
+
+---
+
+## 🛠️ Installation
+
+### Method 1: Via Git (Manual)
+1. Open terminal in your ComfyUI custom nodes directory:
    ```bash
    cd ComfyUI/custom_nodes
    ```
-2. Склонируйте репозиторий:
+2. Clone this repository:
    ```bash
    git clone https://github.com/trx7111/ComfyUI-TrixLoader.git
    ```
-3. Перезапустите ComfyUI.
+3. Restart ComfyUI.
 
-### Способ 2: Через ComfyUI Manager (после добавления в реестр)
-* Скоро будет доступно для установки в один клик через поиск по имени `ComfyUI-TrixLoader`.
+### Method 2: Via ComfyUI Manager
+* Search for `ComfyUI-TrixLoader` inside ComfyUI Manager and install in one click.
 
 ---
 
-## 👨‍💻 Автор
-- Создано разработчиком **Trix** специально для сообщества **StableDif**
+## 👨‍💻 Author
+- Created by **Trix** for the **StableDif** community.
