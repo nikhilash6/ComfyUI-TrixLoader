@@ -43,7 +43,8 @@ export function openTrixCropEditor(node, cropWidget) {
     let origW = node.imgTagRef.naturalWidth;
     let origH = node.imgTagRef.naturalHeight;
 
-    let cropData = { x: 0, y: 0, w: origW, h: origH, color: "#7f7f7f" };
+    node.properties = node.properties || {};
+    let cropData = { x: 0, y: 0, w: origW, h: origH, color: node.properties.trix_crop_color || "#666666" };
     try {
         if (cropWidget && cropWidget.value && cropWidget.value !== "{}") {
             const parsed = JSON.parse(cropWidget.value);
@@ -65,7 +66,7 @@ export function openTrixCropEditor(node, cropWidget) {
     sidebar.style.cssText = `
         width: 280px; height: 100%; background: #151515; border-right: 1px solid #333;
         display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
-        box-shadow: 2px 0 10px rgba(0,0,0,0.5); z-index: 10;
+        box-shadow: 2px 0 10px rgba(0,0,0,0.5); z-index: 10; overflow-y: auto;
     `;
 
     const svgTitle = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom; margin-right: 6px;"><path d="M3 3v18h18"></path><path d="M3 15h12v-12"></path></svg>`;
@@ -126,6 +127,233 @@ export function openTrixCropEditor(node, cropWidget) {
         };
         presetRow.appendChild(btn);
     });
+
+    const alignContainer = document.createElement("div");
+    alignContainer.style.cssText = "display: flex; flex-direction: column; margin-bottom: 15px; position: relative;";
+
+    const alignBtn = document.createElement("button");
+    const svgChevron = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left: auto;"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+    alignBtn.innerHTML = `<span style="font-size: 12px; font-weight: 500;">Alignment: Free</span>${svgChevron}`;
+    alignBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px 10px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; width: 100%; transition: 0.2s; box-sizing: border-box;";
+    applyCpoButtonHover(alignBtn);
+
+    const dropdown = document.createElement("div");
+    dropdown.style.cssText = `
+        position: absolute; top: 100%; left: 0; right: 0; background: #1a1a1f; 
+        border: 1px solid #444; border-radius: 4px; z-index: 1000; display: none; 
+        flex-direction: column; max-height: 200px; overflow-y: auto; margin-top: 4px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;
+    `;
+
+    const options = [
+        { label: "Free", id: "free" },
+        { label: "Top left", id: "top-left" },
+        { label: "Top", id: "top" },
+        { label: "Top right", id: "top-right" },
+        { label: "Left", id: "left" },
+        { label: "Center crop", id: "center" },
+        { label: "Right", id: "right" },
+        { label: "Bottom left", id: "bottom-left" },
+        { label: "Bottom", id: "bottom" },
+        { label: "Bottom right", id: "bottom-right" }
+    ];
+
+    options.forEach(opt => {
+        const item = document.createElement("div");
+        item.innerText = opt.label;
+        item.style.cssText = "padding: 6px 12px; color: #ccc; cursor: pointer; font-size: 12px; transition: 0.15s;";
+        item.onmouseenter = () => { item.style.background = CPO_ACCENT; item.style.color = "#fff"; };
+        item.onmouseleave = () => { item.style.background = "transparent"; item.style.color = "#ccc"; };
+        item.onclick = (e) => {
+            e.stopPropagation();
+            alignBtn.querySelector("span").innerText = `Alignment: ${opt.label}`;
+            dropdown.style.display = "none";
+            
+            const w = cropData.w;
+            const h = cropData.h;
+            switch(opt.id) {
+                case "top-left":
+                    cropData.x = 0;
+                    cropData.y = 0;
+                    break;
+                case "top":
+                    cropData.x = (origW - w) / 2;
+                    cropData.y = 0;
+                    break;
+                case "top-right":
+                    cropData.x = origW - w;
+                    cropData.y = 0;
+                    break;
+                case "left":
+                    cropData.x = 0;
+                    cropData.y = (origH - h) / 2;
+                    break;
+                case "center":
+                    cropData.x = (origW - w) / 2;
+                    cropData.y = (origH - h) / 2;
+                    break;
+                case "right":
+                    cropData.x = origW - w;
+                    cropData.y = (origH - h) / 2;
+                    break;
+                case "bottom-left":
+                    cropData.x = 0;
+                    cropData.y = origH - h;
+                    break;
+                case "bottom":
+                    cropData.x = (origW - w) / 2;
+                    cropData.y = origH - h;
+                    break;
+                case "bottom-right":
+                    cropData.x = origW - w;
+                    cropData.y = origH - h;
+                    break;
+                case "free":
+                default:
+                    break;
+            }
+            if (currentSnap > 1) {
+                cropData.x = Math.round(cropData.x / currentSnap) * currentSnap;
+                cropData.y = Math.round(cropData.y / currentSnap) * currentSnap;
+            }
+            draw();
+        };
+        dropdown.appendChild(item);
+    });
+
+    alignBtn.onclick = (e) => {
+        e.stopPropagation();
+        const show = dropdown.style.display === "flex";
+        dropdown.style.display = show ? "none" : "flex";
+    };
+
+    document.addEventListener("click", () => {
+        dropdown.style.display = "none";
+    }, { signal: abortCtrl.signal });
+
+    alignContainer.append(alignBtn, dropdown);
+
+    const resetAlignmentToFree = () => {
+        const span = alignBtn.querySelector("span");
+        if (span) span.innerText = "Alignment: Free";
+    };
+
+    const transformLabel = document.createElement("div");
+    transformLabel.innerText = "Mirror & Rotate";
+    transformLabel.style.cssText = "color: #aaa; font-size: 11px; margin-bottom: 5px; font-weight: bold; text-transform: uppercase;";
+
+    const transformRow = document.createElement("div");
+    transformRow.style.cssText = "display: flex; gap: 4px; margin-bottom: 20px;";
+
+    const svgMirrorH = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M12 2v20M20 16l-6-4 6-4v8zM4 16l6-4-6-4v8z"></path></svg>`;
+    const svgMirrorV = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M2 12h20M16 20l-4-6-4 6h8zM16 4l-4 6-4-6h8z"></path></svg>`;
+    const svgRotateCW = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>`;
+    const svgRotateCCW = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>`;
+
+    const btnMirrorH = document.createElement("button");
+    btnMirrorH.innerHTML = svgMirrorH;
+    btnMirrorH.title = "Mirror Horizontal";
+    btnMirrorH.style.cssText = `background: ${CPO_BUTTON_BG}; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex: 1; transition: 0.2s;`;
+    applyCpoButtonHover(btnMirrorH);
+
+    const btnMirrorV = document.createElement("button");
+    btnMirrorV.innerHTML = svgMirrorV;
+    btnMirrorV.title = "Mirror Vertical";
+    btnMirrorV.style.cssText = `background: ${CPO_BUTTON_BG}; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex: 1; transition: 0.2s;`;
+    applyCpoButtonHover(btnMirrorV);
+
+    const btnRotateCW = document.createElement("button");
+    btnRotateCW.innerHTML = svgRotateCW;
+    btnRotateCW.title = "Rotate 90° Clockwise";
+    btnRotateCW.style.cssText = `background: ${CPO_BUTTON_BG}; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex: 1; transition: 0.2s;`;
+    applyCpoButtonHover(btnRotateCW);
+
+    const btnRotateCCW = document.createElement("button");
+    btnRotateCCW.innerHTML = svgRotateCCW;
+    btnRotateCCW.title = "Rotate 90° Counter-Clockwise";
+    btnRotateCCW.style.cssText = `background: ${CPO_BUTTON_BG}; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex: 1; transition: 0.2s;`;
+    applyCpoButtonHover(btnRotateCCW);
+
+    const transformImage = (op) => {
+        const tempCanvas = document.createElement("canvas");
+        const tempCtx = tempCanvas.getContext("2d");
+        
+        let newW = origW;
+        let newH = origH;
+        
+        if (op === 'rotate-90-cw' || op === 'rotate-90-ccw') {
+            newW = origH;
+            newH = origW;
+        }
+        
+        tempCanvas.width = newW;
+        tempCanvas.height = newH;
+        
+        if (op === 'mirror-h') {
+            tempCtx.translate(origW, 0);
+            tempCtx.scale(-1, 1);
+            tempCtx.drawImage(origImgObj, 0, 0);
+        } else if (op === 'mirror-v') {
+            tempCtx.translate(0, origH);
+            tempCtx.scale(1, -1);
+            tempCtx.drawImage(origImgObj, 0, 0);
+        } else if (op === 'rotate-90-cw') {
+            tempCtx.translate(newW, 0);
+            tempCtx.rotate(90 * Math.PI / 180);
+            tempCtx.drawImage(origImgObj, 0, 0);
+        } else if (op === 'rotate-90-ccw') {
+            tempCtx.translate(0, newH);
+            tempCtx.rotate(-90 * Math.PI / 180);
+            tempCtx.drawImage(origImgObj, 0, 0);
+        }
+        
+        origImgObj.onload = () => {
+            origImgObj.onload = null;
+            const oldW = cropData.w;
+            const oldH = cropData.h;
+            const oldX = cropData.x;
+            const oldY = cropData.y;
+            
+            origW = origImgObj.naturalWidth;
+            origH = origImgObj.naturalHeight;
+            
+            if (op === 'mirror-h') {
+                cropData.x = origW - oldX - oldW;
+            } else if (op === 'mirror-v') {
+                cropData.y = origH - oldY - oldH;
+            } else if (op === 'rotate-90-cw') {
+                cropData.x = origW - oldY - oldH;
+                cropData.y = oldX;
+                cropData.w = oldH;
+                cropData.h = oldW;
+            } else if (op === 'rotate-90-ccw') {
+                cropData.x = oldY;
+                cropData.y = origH - oldX - oldW;
+                cropData.w = oldH;
+                cropData.h = oldW;
+            }
+            
+            cropData.x = Math.max(0, Math.min(origW, cropData.x));
+            cropData.y = Math.max(0, Math.min(origH, cropData.y));
+            cropData.w = Math.max(1, Math.min(origW - cropData.x, cropData.w));
+            cropData.h = Math.max(1, Math.min(origH - cropData.y, cropData.h));
+            
+            if (isLocked) {
+                lockRatio = cropData.w / cropData.h;
+            }
+            
+            resetAlignmentToFree();
+            resizeCanvas();
+        };
+        origImgObj.src = tempCanvas.toDataURL("image/png");
+    };
+
+    btnMirrorH.onclick = () => transformImage('mirror-h');
+    btnMirrorV.onclick = () => transformImage('mirror-v');
+    btnRotateCW.onclick = () => transformImage('rotate-90-cw');
+    btnRotateCCW.onclick = () => transformImage('rotate-90-ccw');
+
+    transformRow.append(btnMirrorH, btnMirrorV, btnRotateCCW, btnRotateCW);
 
     const sizeContainer = document.createElement("div");
     sizeContainer.style.cssText = "display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;";
@@ -190,6 +418,7 @@ export function openTrixCropEditor(node, cropWidget) {
     applyCpoButtonHover(resetBtn);
     resetBtn.onclick = () => {
         cropData = { x: 0, y: 0, w: origW, h: origH, color: cropData.color };
+        resetAlignmentToFree();
         resizeCanvas();
     };
 
@@ -202,14 +431,100 @@ export function openTrixCropEditor(node, cropWidget) {
     actionRow.append(resetBtn, recenterBtn);
 
     const colorRow = document.createElement("div");
-    colorRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 5px;";
+    colorRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 10px; margin-bottom: 10px;";
+
     const colorLabel = document.createElement("span");
-    colorLabel.innerText = "Fill Color:"; colorLabel.style.color = "#aaa"; colorLabel.style.fontSize = "12px";
-    const colorInput = document.createElement("input");
-    colorInput.type = "color"; colorInput.value = cropData.color;
-    colorInput.style.cssText = "background: none; border: none; cursor: pointer; width: 30px; height: 30px; padding: 0;";
-    colorInput.oninput = (e) => { cropData.color = e.target.value; draw(); };
-    colorRow.append(colorLabel, colorInput);
+    colorLabel.innerText = "Fill Color:";
+    colorLabel.style.cssText = "color: #aaa; font-size: 12px; font-weight: bold; margin-right: auto;";
+
+    const paletteContainer = document.createElement("div");
+    paletteContainer.style.cssText = "display: flex; gap: 4px; align-items: center;";
+
+    const standardColors = ["#000000", "#666666", "#ffffff", "#ff5555", "#ffd166", "#4ade80", "#0e7490"];
+    const colorSquares = [];
+
+    const hiddenColorInput = document.createElement("input");
+    hiddenColorInput.type = "color";
+    hiddenColorInput.style.display = "none";
+    hiddenColorInput.value = cropData.color || "#666666";
+
+    // Create the rainbow square first so it's accessible inside selectColor
+    const rainbowSq = document.createElement("div");
+    rainbowSq.style.cssText = `
+        width: 18px; height: 18px; 
+        background: linear-gradient(135deg, #ff5555, #ffd166, #4ade80, #0e7490);
+        border-radius: 4px; cursor: pointer; box-sizing: border-box; border: 1px solid #444;
+        transition: transform 0.1s, box-shadow 0.1s;
+    `;
+
+    const selectColor = (color) => {
+        cropData.color = color;
+        node.properties = node.properties || {};
+        node.properties.trix_crop_color = color;
+        if (cropWidget) {
+            try {
+                const curVal = JSON.parse(cropWidget.value || "{}");
+                curVal.color = color;
+                cropWidget.value = JSON.stringify(curVal);
+            } catch(e) {
+                cropWidget.value = JSON.stringify({ color: color });
+            }
+        }
+        draw();
+        
+        const isStandard = standardColors.map(c => c.toLowerCase()).includes(color.toLowerCase());
+        
+        colorSquares.forEach(sq => {
+            const sqColor = sq.getAttribute("data-color");
+            if (sqColor.toLowerCase() === color.toLowerCase()) {
+                sq.style.outline = "2px solid " + CPO_ACCENT;
+                sq.style.outlineOffset = "1px";
+            } else {
+                sq.style.outline = "none";
+            }
+        });
+
+        if (!isStandard) {
+            rainbowSq.style.outline = "2px solid " + CPO_ACCENT;
+            rainbowSq.style.outlineOffset = "1px";
+        } else {
+            rainbowSq.style.outline = "none";
+        }
+    };
+
+    hiddenColorInput.oninput = () => {
+        selectColor(hiddenColorInput.value);
+    };
+
+    // Create 7 standard color squares
+    standardColors.forEach(color => {
+        const sq = document.createElement("div");
+        sq.setAttribute("data-color", color);
+        sq.style.cssText = `
+            width: 18px; height: 18px; background: ${color}; border-radius: 4px;
+            cursor: pointer; box-sizing: border-box; border: 1px solid #444;
+            transition: transform 0.1s, box-shadow 0.1s;
+        `;
+        sq.onmouseenter = () => { sq.style.transform = "scale(1.1)"; };
+        sq.onmouseleave = () => { sq.style.transform = "scale(1)"; };
+        sq.onclick = () => { selectColor(color); };
+        paletteContainer.appendChild(sq);
+        colorSquares.push(sq);
+    });
+
+    rainbowSq.onmouseenter = () => { rainbowSq.style.transform = "scale(1.1)"; };
+    rainbowSq.onmouseleave = () => { rainbowSq.style.transform = "scale(1)"; };
+    rainbowSq.onclick = () => {
+        hiddenColorInput.click();
+    };
+    
+    paletteContainer.appendChild(rainbowSq);
+    colorRow.append(colorLabel, paletteContainer, hiddenColorInput);
+
+    // Initial styling setup
+    setTimeout(() => {
+        selectColor(cropData.color || "#666666");
+    }, 0);
 
     const outpaintRow = document.createElement("div");
     outpaintRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; background: #2a2a2a; padding: 8px 10px; margin-top: 5px; border-radius: 6px; border: 1px solid #444; box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);";
@@ -331,7 +646,7 @@ export function openTrixCropEditor(node, cropWidget) {
     refreshBtn.onclick = () => {
         const isWired = node.inputs && node.inputs.some(inp => inp.name === "in_image" && inp.link !== null);
         if (isWired) {
-            if (cropWidget) cropWidget.value = "{}";
+            if (cropWidget) cropWidget.value = JSON.stringify({ color: cropData.color });
             node._currentLiveUrl = null; 
             if (node.pullLivePreviewRef) node.pullLivePreviewRef();
             setTimeout(() => {
@@ -346,7 +661,7 @@ export function openTrixCropEditor(node, cropWidget) {
         } else {
             let baseName = node._originalImageForCrop || (node.widgets.find(w => w.name === "image") ? node.widgets.find(w => w.name === "image").value : null);
             if (!baseName) return;
-            if (cropWidget) cropWidget.value = "{}";
+            if (cropWidget) cropWidget.value = JSON.stringify({ color: cropData.color });
             
             let filename = baseName; let subfolder = ""; if (baseName.includes("/")) { const parts = baseName.split("/"); filename = parts.pop(); subfolder = parts.join("/"); }
             const url = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}&t=${Date.now()}`;
@@ -387,6 +702,8 @@ export function openTrixCropEditor(node, cropWidget) {
     saveDiskBtn.style.cssText = "flex: 1; padding: 10px; background: #2a2a2f; color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 11px;";
     applyCpoButtonHover(saveDiskBtn, () => false, CPO_BUTTON_BG, CPO_BUTTON_HOVER);
     saveDiskBtn.onclick = () => {
+        node.properties = node.properties || {};
+        node.properties.trix_crop_color = cropData.color;
         const tCanvas = document.createElement("canvas");
         tCanvas.width = cropData.w; tCanvas.height = cropData.h;
         const tCtx = tCanvas.getContext("2d");
@@ -438,6 +755,9 @@ export function openTrixCropEditor(node, cropWidget) {
     saveBtn.onclick = async () => {
         saveBtn.disabled = true;
         saveBtn.innerText = "Saving...";
+        
+        node.properties = node.properties || {};
+        node.properties.trix_crop_color = cropData.color;
         
         cropData.x = Math.round(cropData.x); cropData.y = Math.round(cropData.y);
         cropData.w = Math.round(cropData.w); cropData.h = Math.round(cropData.h);
@@ -528,7 +848,9 @@ export function openTrixCropEditor(node, cropWidget) {
                         widgets.image.value = fullPath;
                         if (widgets.image.callback) widgets.image.callback(fullPath);
                     }
-                    if (cropWidget) cropWidget.value = "{}"; 
+                    if (cropWidget) {
+                        cropWidget.value = JSON.stringify({ color: cropData.color });
+                    }
                 }
             } catch(e) {
                 console.error("Save to Clipspace failed", e);
@@ -539,7 +861,7 @@ export function openTrixCropEditor(node, cropWidget) {
 
     btnContainer.append(cancelBtn, saveDiskBtn, saveBtn);
     actionsWrapper.append(refreshBtn, btnContainer);
-    sidebar.append(title, presetRow, sizeContainer, snapSeparator, snapLabel, snapRow, calcInfo, actionsWrapper);
+    sidebar.append(title, presetRow, alignContainer, sizeContainer, snapSeparator, snapLabel, snapRow, transformLabel, transformRow, calcInfo, actionsWrapper);
 
     const workspace = document.createElement("div");
     workspace.style.cssText = "flex: 1; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center;";
@@ -759,7 +1081,9 @@ export function openTrixCropEditor(node, cropWidget) {
         let dx = (e.clientX - startMx) / camera.zoom;
         let dy = (e.clientY - startMy) / camera.zoom;
 
-        const snapThresh = (5 / 3) / camera.zoom; 
+        resetAlignmentToFree();
+
+        const snapThresh = (10 / 3) / camera.zoom; 
         
         if (dragHandle === "MOVE") {
             if (Math.abs(startCrop.x + dx) < snapThresh) dx = -startCrop.x;

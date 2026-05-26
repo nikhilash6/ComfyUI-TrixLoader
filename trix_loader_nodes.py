@@ -95,7 +95,7 @@ class TrixLoadImageAIO:
 
     CATEGORY = "TrixLoader 🪬"
     DESCRIPTION = """TABS CONTROLS: 
-❂ COLOR GRADING [MAIN]
+❂ COLOR GRADING [BASE]
 ➥ Dbl-Click tab to open Camera Raw menu
 ➥ Toggle "Enable Filter" to unlock dimension settings
 ➥ Click "Live Camera Raw" for visual adjustments
@@ -501,6 +501,18 @@ class TrixLoadImageAIO:
     def process(self, image, width, height, pad_left, pad_top, pad_right, pad_bottom, upscale_method, keep_proportion, scale_by, condition, feathering, divisible_by, enable_resize, mode, mask_data, crop_data="{}", hsl_data="{}", hsl_active=False, curve_data="{}", curve_active=False, in_image=None, in_mask=None, unique_id=None, **kwargs):
         
         ui_images = None
+        fill_color = (127, 127, 127)
+        if crop_data and crop_data != "{}":
+            try:
+                import json
+                cdata = json.loads(crop_data)
+                hex_color = cdata.get("color", "#666666")
+                if hex_color.startswith("#"):
+                    hex_color = hex_color.lstrip('#')
+                    if len(hex_color) == 6:
+                        fill_color = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+            except Exception as e:
+                pass
         file_name_full = "image.png"
         orig_image_tensor = None
         
@@ -596,7 +608,7 @@ class TrixLoadImageAIO:
                         pad_bottom += divisible_by - rem_h
                         target_h += divisible_by - rem_h
                 
-                new_img = Image.new("RGB", (target_w, target_h), (127, 127, 127))
+                new_img = Image.new("RGB", (target_w, target_h), fill_color)
                 new_img.paste(img, (pad_left, pad_top))
                 img = new_img
                 

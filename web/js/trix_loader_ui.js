@@ -2284,9 +2284,12 @@ app.registerExtension({
                         if (maskCanvas.requestPointerLock) maskCanvas.requestPointerLock(); 
                         e.preventDefault(); e.stopPropagation(); return; 
                     }
-                    if (e.button !== 0) return; 
+                    if (e.button !== 0 && e.button !== 2) return; 
 
-                    drawing = true; node._wasShiftDrawing = e.shiftKey; const { x, y, cssX, cssY } = getCanvasCoord(e);
+                    drawing = true;
+                    node._isRmbErasing = (e.button === 2);
+                    node._wasShiftDrawing = e.shiftKey;
+                    const { x, y, cssX, cssY } = getCanvasCoord(e);
                     brushCursor.style.left = `${cssX}px`; brushCursor.style.top = `${cssY}px`; brushCursor.style.display = "block";
 
                     const blurAmount = (1 - node.brushHardness) * (node.brushSize / 4);
@@ -2295,7 +2298,7 @@ app.registerExtension({
                     mctx.lineWidth = drawSize; 
                     mctx.lineCap = "round"; 
                     mctx.lineJoin = "round"; 
-                    mctx.globalCompositeOperation = node.isEraser ? "destination-out" : "source-over"; 
+                    mctx.globalCompositeOperation = (node.isEraser || node._isRmbErasing) ? "destination-out" : "source-over"; 
                     
                     if (blurAmount > 0) {
                         mctx.shadowBlur = blurAmount;
@@ -2371,7 +2374,7 @@ app.registerExtension({
                     mctx.lineWidth = drawSize; 
                     mctx.lineCap = "round"; 
                     mctx.lineJoin = "round"; 
-                    mctx.globalCompositeOperation = node.isEraser ? "destination-out" : "source-over"; 
+                    mctx.globalCompositeOperation = (node.isEraser || node._isRmbErasing) ? "destination-out" : "source-over"; 
                     
                     if (blurAmount > 0) {
                         mctx.shadowBlur = blurAmount;
@@ -2409,7 +2412,7 @@ app.registerExtension({
                     if (app.canvas) app.canvas.allow_dragcanvas = true;
                     if (isPanning) { isPanning = false; e.preventDefault(); } 
                     if (resizingBrush) { resizingBrush = false; if (document.pointerLockElement === maskCanvas) document.exitPointerLock(); e.preventDefault(); } 
-                    if (drawing) { drawing = false; try { maskCanvas.releasePointerCapture(e.pointerId); } catch(err){} saveHistory(); } 
+                    if (drawing) { drawing = false; node._isRmbErasing = false; try { maskCanvas.releasePointerCapture(e.pointerId); } catch(err){} saveHistory(); } 
                 };
                 window.addEventListener("pointerup", node._pointerUpHandler, { capture: true });
 
