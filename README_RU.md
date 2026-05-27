@@ -2,6 +2,9 @@
 
 [![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](README.md) [![Русский](https://img.shields.io/badge/Язык-Русский-red?style=for-the-badge)](README_RU.md)
 
+> [!TIP]
+> Хотите протестировать новые возможности до официального релиза? Переключайтесь на нашу экспериментальную ветку [beta](https://github.com/trx7111/ComfyUI-TrixLoader/tree/beta)!
+
 Универсальный, стильный и многофункциональный загрузчик изображений (All-in-One) для [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Загружайте, кадрируйте, маскируйте и масштабируйте изображения прямо внутри одного удобного интерфейса.
 
 ![ComfyUI-TrixLoader Banner](preview.png)
