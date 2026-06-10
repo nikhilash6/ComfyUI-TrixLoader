@@ -69,7 +69,7 @@ Click **Open Live Camera Raw** to access a Lightroom-style workspace with advanc
 
 ### 🖌️ Mask Mode & Advanced AI Mask Editor
 
-Designed for manual mask painting and AI-assisted segmentation. Double-click the **Mask** tab or click the **Wand Icon** on the node toolbar to open the full-screen editor overlay.
+Designed for manual mask painting and AI-assisted segmentation. Double-click the **Mask** tab or click the **Star Icon** on the node toolbar to open the full-screen editor overlay.
 
 ![Mask Mode Node](assets/mask1.png)
 
@@ -84,12 +84,12 @@ A powerful editing space combining traditional brushes with advanced neural netw
 
 #### Features & AI Models:
 * **Segment Anything (SAM)**: Toggle the SAM tool, select a model, and click on an object to segment it.
-  - Supported models: [SAM 2.1 Hiera Tiny](https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2.1_hiera_tiny-fp16.safetensors), [SAM 2.1 Hiera Large](https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2.1_hiera_large-fp16.safetensors), and [SAM 3](https://huggingface.co/yolain/sam3-safetensors/resolve/main/sam3-fp16.safetensors).
+  - Supported models: [SAM 2.1 Hiera Tiny](https://huggingface.co/Kijai/sam2-safetensors), [SAM 2.1 Hiera Large](https://huggingface.co/Kijai/sam2-safetensors), and [SAM 3](https://huggingface.co/yolain/sam3-safetensors).
   - Prompts: Left-click to add foreground points (+), Right-click to add background points (-).
   - **SAM PRO Mode**: When enabled, the model automatically post-processes the mask to eliminate small noise (salt-and-pepper noise), closes internal gaps/holes using morphological filters, and isolates only the connected mask clusters containing your prompt points.
-* **Text Detection (GroundingDINO)**: Type text queries (e.g., "glasses", "hair") and click Detect to automatically generate masks using the [GroundingDINO SwinT OGC](https://huggingface.co/IDEA-Research/grounding-dino-tiny/resolve/main/model.safetensors) model.
+* **Text Detection (GroundingDINO)**: Type text queries (e.g., "glasses", "hair") and click Detect to automatically generate masks using the [GroundingDINO SwinT OGC](https://huggingface.co/IDEA-Research/grounding-dino-tiny) model.
 * **Remove Background (RMBG)**: Isolate objects or subjects instantly.
-  - Supported models: [InspyreNet](https://huggingface.co/dummy9996/inspyrenet-bf16/resolve/main/inspyrenet.safetensors), [BEN2](https://huggingface.co/PramaLLC/BEN2/resolve/main/model.safetensors), [BiRefNet Standard](https://huggingface.co/ezzdev/BiRefNet/resolve/main/model.safetensors), [BiRefNet HR](https://huggingface.co/ZhengPeng7/BiRefNet_HR/resolve/main/model.safetensors), [BiRefNet Portrait](https://huggingface.co/ZhengPeng7/BiRefNet-portrait/resolve/main/model.safetensors), and [BiRefNet Toonout](https://huggingface.co/joelseytre/toonout/resolve/main/birefnet_finetuned_toonout.pth).
+  - Supported models: [InspyreNet](https://huggingface.co/dummy9996/inspyrenet-bf16), [BEN2](https://huggingface.co/PramaLLC/BEN2), [BiRefNet Standard](https://huggingface.co/ezzdev/BiRefNet), [BiRefNet HR](https://huggingface.co/ZhengPeng7/BiRefNet_HR), [BiRefNet Portrait](https://huggingface.co/ZhengPeng7/BiRefNet-portrait), and [BiRefNet Toonout](https://huggingface.co/joelseytre/toonout).
   - **Alpha Matting (Refined Edges)**: Toggle this checkbox to apply advanced boundary refinement. It computes soft, anti-aliased transitions for fine structures like hair, fur, or semi-transparent details, producing a flawless edge cutout.
 * **Post-processing**: Adjust Grow (dilation) and Blur sliders in real-time to refine mask edges. Scale mask output opacity dynamically.
 * **Pad for Outpaint**: Click this button to instantly open the Crop/Pad editor, resize/extend your canvas, and return directly to the Mask Editor with coordinates aligned and your drawing intact.

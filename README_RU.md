@@ -69,7 +69,7 @@
 
 ### 🖌️ Режим Mask и продвинутый AI-редактор масок
 
-Режим ручного рисования масок и умного ИИ-выделения. Дважды кликните по вкладке **Mask** или нажмите на иконку **волшебной палочки** на панели ноды для открытия полноэкранного редактора.
+Режим ручного рисования масок и умного ИИ-выделения. Дважды кликните по вкладке **Mask** или нажмите на иконку **звездочки** на панели ноды для открытия полноэкранного редактора.
 
 ![Mask Mode Node](assets/mask1.png)
 
@@ -84,12 +84,12 @@
 
 #### Инструменты и модели ИИ:
 * **Segment Anything (SAM)**: Включите режим SAM, выберите модель и кликайте по объектам для их мгновенного выделения.
-  - Поддерживаемые модели: [SAM 2.1 Hiera Tiny](https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2.1_hiera_tiny-fp16.safetensors), [SAM 2.1 Hiera Large](https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2.1_hiera_large-fp16.safetensors) и [SAM 3](https://huggingface.co/yolain/sam3-safetensors/resolve/main/sam3-fp16.safetensors).
+  - Поддерживаемые модели: [SAM 2.1 Hiera Tiny](https://huggingface.co/Kijai/sam2-safetensors), [SAM 2.1 Hiera Large](https://huggingface.co/Kijai/sam2-safetensors) и [SAM 3](https://huggingface.co/yolain/sam3-safetensors).
   - Управление кликами: Левый клик — добавить объект (+), Правый клик — исключить область (-).
   - **Режим SAM PRO**: При активации этого режима маска проходит автоматическую постобработку: удаляются мелкие точечные шумы, заполняются пустоты и внутренние отверстия с помощью морфологических фильтров, а также изолируются только те связные области маски, в которых были установлены ваши клики.
-* **Маскирование по тексту (GroundingDINO)**: Введите текстовый запрос (например, "glasses", "hair") и нажмите Detect для автоматического создания маски моделью [GroundingDINO SwinT OGC](https://huggingface.co/IDEA-Research/grounding-dino-tiny/resolve/main/model.safetensors).
+* **Маскирование по тексту (GroundingDINO)**: Введите текстовый запрос (например, "glasses", "hair") и нажмите Detect для автоматического создания маски моделью [GroundingDINO SwinT OGC](https://huggingface.co/IDEA-Research/grounding-dino-tiny).
 * **Удаление фона (RMBG)**: Мгновенное отделение объекта от фона.
-  - Поддерживаемые модели: [InspyreNet](https://huggingface.co/dummy9996/inspyrenet-bf16/resolve/main/inspyrenet.safetensors), [BEN2](https://huggingface.co/PramaLLC/BEN2/resolve/main/model.safetensors), [BiRefNet Standard](https://huggingface.co/ezzdev/BiRefNet/resolve/main/model.safetensors), [BiRefNet HR](https://huggingface.co/ZhengPeng7/BiRefNet_HR/resolve/main/model.safetensors), [BiRefNet Portrait](https://huggingface.co/ZhengPeng7/BiRefNet-portrait/resolve/main/model.safetensors) и [BiRefNet Toonout](https://huggingface.co/joelseytre/toonout/resolve/main/birefnet_finetuned_toonout.pth).
+  - Поддерживаемые модели: [InspyreNet](https://huggingface.co/dummy9996/inspyrenet-bf16), [BEN2](https://huggingface.co/PramaLLC/BEN2), [BiRefNet Standard](https://huggingface.co/ezzdev/BiRefNet), [BiRefNet HR](https://huggingface.co/ZhengPeng7/BiRefNet_HR), [BiRefNet Portrait](https://huggingface.co/ZhengPeng7/BiRefNet-portrait) и [BiRefNet Toonout](https://huggingface.co/joelseytre/toonout).
   - **Alpha Matting / Refine Edges (Уточнение краев)**: Активируйте этот чекбокс для точной обработки краев объекта. Модель строит мягкие, полупрозрачные переходы на сложных участках (волосы, шерсть, тонкие нити, прозрачные элементы), что позволяет избежать эффекта «топорного вырезания» и обеспечивает бесшовное наложение.
 * **Постобработка маски**: Слайдеры Grow (расширение) и Blur (размытие) маски в реальном времени. Регулировка прозрачности маски на выходе.
 * **Pad for Outpaint**: Кнопка быстрого перехода в редактор кропа/полей для увеличения холста с последующим возвратом и сохранением маски.
