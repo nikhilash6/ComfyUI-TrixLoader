@@ -1,178 +1,171 @@
-# ComfyUI-TrixLoader
-
-[![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](README.md) [![Русский](https://img.shields.io/badge/Язык-Русский-red?style=for-the-badge)](README_RU.md)
-
-> [!TIP]
-> Want to test upcoming experimental features? Switch to our [beta branch](https://github.com/trx7111/ComfyUI-TrixLoader/tree/beta)!
-
-A universal, stylish, and multi-functional (All-in-One) image loader for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Load, crop, mask, and scale images directly within a single convenient interface.
-
-![ComfyUI-TrixLoader Banner](preview.png)
-
----
-
-## 📌 Table of Contents
-1. [🌟 Key Features](#-key-features)
-2. [🔌 Inputs and Outputs](#-inputs-and-outputs)
-3. [⚙️ Operation Modes (Detailed Breakdown)](#-operation-modes-detailed-breakdown)
-4. [⌨️ Tricks and Shortcuts](#️-tricks-and-shortcuts)
-5. [🔄 Recent Updates](#-recent-updates)
-6. [🛠️ Installation](#️-installation)
-
----
-
-## 🌟 Key Features
-
-- **All-in-One**: No more cluttering the graph with separate nodes for loading, cropping, color grading, and resizing.
-- **Built-in Crop Editor**: Interactive crop frame directly on the node canvas.
-- **Smart Masking**: Brush masking with full Undo/Redo history and zoom support.
-- **Professional Color Grading**: Controls for exposure, contrast, highlights/shadows, color temperature, vibrance, vignetting, and HSL.
-
----
-
-## 🔌 Inputs and Outputs
-
-Visual representation of the node and its connections in the ComfyUI graph:
-
-![Inputs and Outputs Connection](assets/inimage_inmask_v2.png)
-
-### Input Ports:
-1. **in_image** *(optional)* — external incoming image for processing.
-2. **in_mask** *(optional)* — external incoming mask.
-
-### Output Ports:
-1. **IMAGE** — final processed image (including crop, color grading, and scaling).
-2. **MASK** — generated mask (drawn manually or passed from the input).
-3. **original_input** — raw, unprocessed source image.
-   - *Note*: If an external image is fed into the `in_image` port, this port is automatically `blocked` to prevent logical feedback loop errors.
-
----
-
-## ⚙️ Operation Modes (Detailed Breakdown)
-
-The node's capabilities are divided into 3 switchable modes, always accessible on the control toolbar.
-
-### 🎬 1. BASE Mode (Basic Loading & Color Grading)
-
-This mode is designed for standard image loading and basic processing. You can fine-tune colors, exposure, and contrast before passing the image down the graph. Double-click the **Base** tab to enter the advanced processing settings panel; double-click it again to exit.
-
-| Standard Base Mode | Control Toolbar (BASE) |
-| :---: | :---: |
-| ![Base Mode Standard](assets/base.png) | ![BASE Toolbar](assets/base_bar.png) |
-
-#### Live Camera Raw & Curves Interface:
-Click the **open live camera raw** button to access a professional Camera Raw panel with advanced color correction, HSL adjustments, and Curve charts.
-
-| Camera Raw Panel | Curves & HSL Settings |
-| :---: | :---: |
-| ![Camera Raw Overview](assets/camera_raw.png) | ![Camera Raw Curves & HSL](assets/camera_raw_curves_hs.png) |
-
----
-
-### 🖌️ 2. MASK Mode (Mask Drawing)
-
-A mode with a built-in graphic mask editor. Allows you to quickly paint an inpainting mask right inside the node.
-
-Double-click the **mask** tab or click the **Wand Icon** on the toolbar to enter the new full-screen **Advanced AI Mask Editor** overlay; click Exit or press Esc to exit.
-
-#### Available Tools:
-* **Standard Drawing**: Manual brush and eraser tool with smooth size and hardness adjustment.
-* **Object Selector (SAM)**: Toggle the SAM tool, select a Segment Anything model (Fast, Balanced, or Best), and click on any object in the image to automatically generate a perfect pixel-accurate mask.
-* **Remove Background**: Instantly extract subjects or remove backgrounds using AI models (`u2net`, `isnet`, or `birefnet`).
-* **Real-time Grow & Blur**: Dilate (grow) and blur the mask on the fly with live visual canvas feedback.
-* **Output Translucency**: Scale mask opacity dynamically for soft edge blending at the output port.
-* **Outpaint Padding Integration**: Click **Pad Image for Outpaint** to directly open the Crop/Pad editor, resize/pad the canvas, and automatically jump back to the Mask Editor with coordinates aligned and your previous mask preserved.
-
-| Control Toolbar (MASK) | Mask Editor Canvas |
-| :---: | :---: |
-| ![MASK Toolbar](assets/mask_bar.png) | ![MASK Canvas](assets/mask_canvas.png) |
-
-
-
----
-
-### 📐 3. RESIZE Mode (Resizing & Scaling)
-
-A professional tool to resize image resolution with aspect ratio locking and smart padding options.
-
-| Control Toolbar (RESIZE) | Scaling Options |
-| :---: | :---: |
-| ![RESIZE Toolbar](assets/resize_bar.png) | ![RESIZE Options](assets/options_resizebar_v3.png) |
-
----
-
-## ⌨️ Tricks and Shortcuts
-
-The node is equipped with numerous hotkeys and hidden features to accelerate your workflow.
-
-| Interactive Crop Editor | Auto-mask Outpaint | Context Menu |
-| :---: | :---: | :---: |
-| ![Crop Editor View](assets/cpo_editor.png) | ![Auto-mask Outpaint](assets/crop_automask.png) | ![Context Options](assets/context_options.png) |
-
-### 🎨 Mask Editor (Mask Mode)
-* <kbd>Alt</kbd> + **Right Click** + **Drag** — interactively adjust brush size (horizontal movement) and hardness (vertical movement) directly on the canvas.
-* <kbd>Ctrl</kbd> + **Left Click** — smart flood fill of enclosed mask areas.
-* <kbd>Shift</kbd> + **Left Click** — draws a straight line from the last painted point to the current click. Holding Shift while dragging locks the line to vertical or horizontal axes.
-* **Mouse Wheel** — Zoom in/out of the canvas in full-screen mode.
-* **Middle Mouse Click / Wheel Click + Drag** — pan around the canvas.
-* <kbd>Esc</kbd> — quickly exit the full-screen masking mode.
-
-### 📐 Crop Editor & Outpaint
-* **Auto-Mask Outpaint** — when toggled on, areas outside the original frame are automatically converted into a mask.
-* **Feathering** — smooth outpaint mask edges for seamless blending.
-* <kbd>Shift</kbd> + **Drag Corner Handle** — forces a locked aspect ratio during cropping.
-* <kbd>Alt</kbd> + **Drag Corner Handle** — scales the crop frame symmetrically relative to its center.
-* **Pixel Snap** — `None`, `x2`, `x4`, `x8`, `x32`, `x64` buttons round the dimensions and coordinates to the selected step for perfect rendering.
-* **Mouse Wheel** — Zoom in/out of the workspace.
-* **Middle Click / Alt + Left Click + Drag** — pan around the canvas.
-* <kbd>Esc</kbd> — close the editor without saving changes.
-
-### 📋 Context Menu & Mask Clipboard
-* **Copy and Paste Masks** — the node's context menu (right-click) includes built-in `Copy Mask` and `Paste Mask` commands. This allows you to instantly transfer masks between nodes without manual routing.
-
-### ⚡ Quick Reset & Actions (Double-Click)
-* **Double-Click sliders & values** — double-click any slider, numerical input, or label to instantly reset it to its default value (works on both node controls and Camera Raw panel).
-* **Double-Click `Mask` tab** — toggle full-screen masking mode.
-* **Double-Click `Base` tab** — toggle Camera Raw panel.
-
-### 🌡️ Camera Raw Panel (Color Grading)
-* **HSL Color Picker (Finger Icon)** — click and drag horizontally on any color in the image to dynamically adjust the saturation of that color range.
-* **Double-Click on Curve** — resets the selected channel curve (RGB/Red/Green/Blue) to linear.
-* **Right-Click on Curve point** — deletes the selected point.
-* **Mouse Wheel / Middle Click** — zoom and pan the image for close inspection.
-* <kbd>Esc</kbd> — close the editor without saving.
-
----
-
-## 🔄 Recent Updates
-
-* **Mask Editor Improvements**: Added right-click (RMB) eraser support — hold RMB to dynamically erase mask paths for quick edits.
-* **CPO Editor Enhancements**:
-  - Doubled the border snap strength for precise locking of the crop boundaries.
-  - Added an **Alignment** panel with quick presets (`Top-left`, `Center crop`, `Bottom-right`, etc.).
-  - Added image mirroring (horizontal/vertical) and 90° rotation (CW/CCW).
-  - Added scroll support to the sidebar for smaller screens.
-* **Outpaint Color Integration**: Added a color palette of 7 standard colors + custom rainbow picker. The selected fill color is now used by `pad_for_outpainting`.
-
----
-
-## 🛠️ Installation
-
-### Method 1: Via Git (Manual)
-1. Open terminal in your ComfyUI custom nodes directory:
-   ```bash
-   cd ComfyUI/custom_nodes
-   ```
-2. Clone this repository:
-   ```bash
-   git clone https://github.com/trx7111/ComfyUI-TrixLoader.git
-   ```
-3. Restart ComfyUI.
-
-### Method 2: Via ComfyUI Manager
-* Search for `ComfyUI-TrixLoader` inside ComfyUI Manager and install in one click.
-
----
-
-## 👨‍💻 Author
-- Created by **Trix** for the **StableDif** community.
+# ComfyUI-TrixLoader
+
+[![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](README.md) [![Русский](https://img.shields.io/badge/Язык-Русский-red?style=for-the-badge)](README_RU.md)
+
+An elegant, all-in-one, high-performance image workflow node for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Load, crop, paint masks, correct colors with professional Camera Raw tools, and scale images seamlessly in a single unified interface.
+
+![ComfyUI-TrixLoader Overview](assets/main.png)
+
+---
+
+## 📌 Table of Contents
+1. [🌟 Core Features](#-core-features)
+2. [🔌 Inputs and Outputs](#-inputs-and-outputs)
+3. [⚙️ Operating Modes](#️-operating-modes)
+   - [🎬 Base Mode & Live Camera Raw](#-base-mode--live-camera-raw)
+   - [🖌️ Mask Mode & Advanced AI Mask Editor](#️-mask-mode--advanced-ai-mask-editor)
+   - [📐 Resize Mode & CPO Editor](#-resize-mode--cpo-editor)
+4. [⚠️ Important Notes](#️-important-notes)
+5. [🛠️ Installation](#️-installation)
+
+---
+
+## 🌟 Core Features
+
+- **All-in-One Workflow**: Replaces multiple nodes for cropping, color correction, resizing, and masking.
+- **Advanced AI Mask Editor**: Point-and-click segmentation (SAM), prompt-based masking (GroundingDINO), and instant background removal (RMBG).
+- **Professional Color Grading**: Full-fledged Live Camera Raw panel with HSL adjustment sliders and RGB/Red/Green/Blue color curves.
+- **Interactive Crop-Pad-Outpaint (CPO) Editor**: Symmetrical scaling, border snapping, quick alignment presets, image rotation, mirroring, and outpaint color selection.
+- **Real-time Performance**: Smooth GPU-accelerated rendering and offscreen canvas caching.
+
+---
+
+## 🔌 Inputs and Outputs
+
+- **in_image** *(optional)*: Input external image for processing. If connected, the original image loader is bypassed and the `original_input` output port is blocked to prevent loop feedback errors.
+- **in_mask** *(optional)*: Input external mask to layer/combine.
+- **IMAGE**: The final processed output image (cropped, color graded, and scaled).
+- **MASK**: The drawn or AI-generated mask channel.
+- **original_input**: The raw, unprocessed source image (active only when using the internal loader).
+
+---
+
+## ⚙️ Operating Modes
+
+The node is divided into 3 distinct, switchable operation modes.
+
+### 🎬 Base Mode & Live Camera Raw
+
+Used for basic image loading, quick adjustments, and professional color grading. Double-click the **Base** tab on the node to toggle the quick adjustments panel.
+
+![Base Mode Node](assets/base1.png)
+
+#### Live Camera Raw:
+Click **Open Live Camera Raw** to access a Lightroom-style workspace with advanced sliders, HSL adjustments, and graph curves.
+
+| Curves & Basic Sliders | HSL & Details Panel |
+| :---: | :---: |
+| ![Camera Raw Curves](assets/lcr1.png) | ![Camera Raw HSL](assets/lcr2.png) |
+
+#### Features & Shortcuts:
+* **Real-time Processing**: Fast 60 FPS GPU-accelerated updates with offscreen rendering optimization.
+* **HSL Color Picker (Finger Icon)**: Click and drag horizontally directly over any color in the image preview to adjust the saturation of that color range in real-time.
+* **Curve Controls**: Double-click on the curve grid to reset the current channel to linear. Right-click any point on the curve to delete it.
+* **Parameter Reset**: Double-click any slider or numerical label to reset its value to the default.
+* **Zoom & Pan**: Use the mouse wheel to zoom and hold the middle mouse button (or drag) to pan the preview.
+* **Exit**: Press <kbd>Esc</kbd> to close without saving.
+
+---
+
+### 🖌️ Mask Mode & Advanced AI Mask Editor
+
+Designed for manual mask painting and AI-assisted segmentation. Double-click the **Mask** tab or click the **Wand Icon** on the node toolbar to open the full-screen editor overlay.
+
+![Mask Mode Node](assets/mask1.png)
+
+#### Advanced AI Mask Editor:
+A powerful editing space combining traditional brushes with advanced neural network models.
+
+| Main Canvas & Drawing | AI Segmentation (SAM) |
+| :---: | :---: |
+| ![Canvas & Drawing](assets/mask_e1.png) | ![AI Segmentation](assets/mask_e2.png) |
+| **Background Removal (RMBG)** | **Post-processing & Outpaint Pad** |
+| ![Background Removal](assets/mask_e3.png) | ![Post-processing & Outpaint](assets/mask_e4.png) |
+
+#### Features & AI Models:
+* **Segment Anything (SAM)**: Toggle the SAM tool, select a model, and click on an object to segment it.
+  - Supported models: [SAM 2.1 Hiera Tiny](https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2.1_hiera_tiny-fp16.safetensors), [SAM 2.1 Hiera Large](https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2.1_hiera_large-fp16.safetensors), and [SAM 3](https://huggingface.co/yolain/sam3-safetensors/resolve/main/sam3-fp16.safetensors).
+  - Prompts: Left-click to add foreground points (+), Right-click to add background points (-).
+* **Text Detection (GroundingDINO)**: Type text queries (e.g., "glasses", "hair") and click Detect to automatically generate masks using the [GroundingDINO SwinT OGC](https://huggingface.co/IDEA-Research/grounding-dino-tiny/resolve/main/model.safetensors) model.
+* **Remove Background (RMBG)**: Isolate objects or subjects instantly.
+  - Supported models: [InspyreNet](https://huggingface.co/dummy9996/inspyrenet-bf16/resolve/main/inspyrenet.safetensors), [BEN2](https://huggingface.co/PramaLLC/BEN2/resolve/main/model.safetensors), [BiRefNet Standard](https://huggingface.co/ezzdev/BiRefNet/resolve/main/model.safetensors), [BiRefNet HR](https://huggingface.co/ZhengPeng7/BiRefNet_HR/resolve/main/model.safetensors), [BiRefNet Portrait](https://huggingface.co/ZhengPeng7/BiRefNet-portrait/resolve/main/model.safetensors), and [BiRefNet Toonout](https://huggingface.co/joelseytre/toonout/resolve/main/birefnet_finetuned_toonout.pth).
+* **Post-processing**: Adjust Grow (dilation) and Blur sliders in real-time to refine mask edges. Scale mask output opacity dynamically.
+* **Pad for Outpaint**: Click this button to instantly open the Crop/Pad editor, resize/extend your canvas, and return directly to the Mask Editor with coordinates aligned and your drawing intact.
+* **Save to Disk**: Save your mask directly to disk with a dark gray button styled at `rgb(42, 42, 42)`.
+
+#### Shortcuts:
+* <kbd>Alt</kbd> + **Right Click** + **Drag**: Adjust brush size (move mouse horizontally) and hardness (move mouse vertically) interactively.
+* **Right Click (Hold & Drag)**: Acts as an eraser on the fly while drawing.
+* <kbd>Ctrl</kbd> + **Left Click**: Smart flood fill for enclosed mask regions.
+* <kbd>Shift</kbd> + **Left Click**: Draw a straight line from the last point. Dragging with Shift locks the line to vertical/horizontal axes.
+* **Mouse Wheel**: Zoom in/out of the canvas.
+* **Middle Mouse Click + Drag**: Pan the canvas.
+* <kbd>Esc</kbd>: Exit editor.
+
+---
+
+### 📐 Resize Mode & CPO Editor
+
+For resizing, scaling, cropping, and padding images.
+
+| Resize settings | Aspect Lock & Fill | Resolution Snap |
+| :---: | :---: | :---: |
+| ![Resize Settings](assets/resize.png) | ![Aspect Lock & Fill](assets/resize2.png) | ![Resolution Snap](assets/resize3.png) |
+
+#### Crop-Pad-Outpaint (CPO) Editor:
+Double-click the **Resize** tab or click the **Crop Icon** on the node toolbar to open the full-screen CPO workspace.
+
+![CPO Editor](assets/cpo1.png)
+
+#### Features:
+* **Border Snapping**: Snapping to image boundaries has been doubled in strength for precise alignment.
+* **Alignment Panel**: Quick alignment presets (e.g., Center, Top-Left, Bottom-Right, etc.).
+* **Mirror & Rotate**: Flip the image horizontally/vertically or rotate it 90 degrees (CW/CCW).
+* **Outpaint Padding Color**: Choose a fill color from the 7 standard swatches or select a custom color.
+* **Auto-Mask Outpaint**: When enabled, newly padded outpaint regions are automatically converted into a mask.
+
+#### Shortcuts:
+* <kbd>Shift</kbd> + **Drag Corner**: Forces a locked aspect ratio during cropping.
+* <kbd>Alt</kbd> + **Drag Corner**: Scales the crop box symmetrically from the center.
+* **Pixel Snap**: Round coordinates and dimensions to steps of `x2`, `x4`, `x8`, `x32`, or `x64` for optimal rendering compatibility.
+* **Mouse Wheel / Middle Click**: Zoom and pan the cropping board.
+* <kbd>Esc</kbd>: Close without saving.
+
+---
+
+## ⚠️ Important Notes
+
+> [!NOTE]
+> **GroundingDINO Download**: When downloading the text-to-mask DINO model, it may appear to freeze. This is not a bug; it is downloading tokenizer and config snapshots in the background. Please wait for it to complete.
+
+> [!IMPORTANT]
+> **100% Download Hang**: If a download (especially SAM 3) finishes at 100% and halts, it is compiling python libraries and installing dependencies. Check your console terminal and wait for the successful installation toast inside the Mask Editor.
+
+> [!TIP]
+> **Brush Offset Fix**: If you encounter brush offset issues (usually after changing inputs like `in_image` / `in_mask`), simply stretch and shrink the node's dimensions on the workspace to recalculate coordinate grids. We recommend using the full-screen **Advanced Mask Editor** to completely bypass any viewport-related offsets.
+
+> [!WARNING]
+> **Model Downloading Issues**: Model downloading for SAM and RMBG is dependent on network connections and Hugging Face accessibility. We have attempted to handle exceptions gracefully, but cannot guarantee successful execution on all setups. We are actively collecting crash data to make this more reliable.
+
+---
+
+## 🛠️ Installation
+
+### Method 1: Via Git (Manual)
+1. Navigate to your ComfyUI custom nodes directory:
+   ```bash
+   cd ComfyUI/custom_nodes
+   ```
+2. Clone this repository:
+   ```bash
+   git clone https://github.com/trx7111/ComfyUI-TrixLoader.git
+   ```
+3. Restart ComfyUI.
+
+### Method 2: Via ComfyUI Manager
+Search for `ComfyUI-TrixLoader` inside the ComfyUI Manager and install in one click.
+
+---
+
+## 👨‍💻 Author
+Created by **Trix** for the **StableDif** community.
