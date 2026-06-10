@@ -2,6 +2,7 @@ import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js"; 
 import { openTrixCameraRawEditor } from './trix_camera_raw.js';
 import { openTrixCropEditor } from './trix_crop_editor.js';
+import { openTrixMaskEditor } from './trix_mask_editor.js';
 
 
 api.addEventListener("trix-update-preview", (event) => {
@@ -61,7 +62,7 @@ const refreshTrixOutputs = (node) => {
     
     // Ensure node has exactly 3 outputs
     while (node.outputs.length < 3) {
-        node.addOutput("original_input", "IMAGE");
+        node.addOutput("↓ original_input", "IMAGE");
     }
     while (node.outputs.length > 3) {
         node.removeOutput(node.outputs.length - 1);
@@ -88,12 +89,12 @@ const refreshTrixOutputs = (node) => {
                 node.disconnectOutput(2);
             }
             node.outputs[2].type = "DISABLED";
-            node.outputs[2].label = "original_input (blocked)";
-            node.outputs[2].name = "original_input";
+            node.outputs[2].label = "↓ original_input (blocked)";
+            node.outputs[2].name = "↓ original_input";
         } else {
             node.outputs[2].type = "IMAGE";
-            node.outputs[2].label = "original_input";
-            node.outputs[2].name = "original_input";
+            node.outputs[2].label = "↓ original_input";
+            node.outputs[2].name = "↓ original_input";
         }
     }
 };
@@ -231,7 +232,7 @@ app.registerExtension({
                         }
                         return w;
                     }
-                    const hideNames = ["mask_data", "crop_data", "cr_enable", "hsl_active", "hsl_data", "curve_active", "curve_data", "width", "height", "pad_left", "pad_top", "pad_right", "pad_bottom", "upscale_method", "keep_proportion", "scale_by", "condition", "feathering", "divisible_by", "enable_resize"];
+                    const hideNames = ["mask_data", "crop_data", "cr_enable", "hsl_active", "hsl_data", "curve_active", "curve_data", "width", "height", "pad_left", "pad_top", "pad_right", "pad_bottom", "upscale_method", "keep_proportion", "scale_by", "condition", "feathering", "divisible_by", "enable_resize", "crop_position", "pad_color", "fill_color"];
                     if (hideNames.includes(name) || name.startsWith("cr_") || name.startsWith("hsl_") || name.startsWith("curve_")) {
                         hideWidget(w);
                     }
@@ -329,7 +330,7 @@ app.registerExtension({
                                     const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
                                     const img = new Image();
                                     img.onload = () => {
-                                        const mctx = this.maskCanvasRef.getContext("2d", { willReadFrequently: true });
+                                        const mctx = this.maskCanvasRef.getContext("2d");
                                         mctx.globalCompositeOperation = "source-over";
                                         mctx.drawImage(img, 0, 0, this.maskCanvasRef.width, this.maskCanvasRef.height);
                                         if (this.saveHistoryRef) this.saveHistoryRef();
@@ -531,7 +532,7 @@ app.registerExtension({
                     
                     if (this.maskCanvasRef && !this._isMaskHidden) {
                         ctx.shadowColor = "transparent"; 
-                        ctx.globalAlpha = 0.8;
+                        ctx.globalAlpha = this._visualOpacityStandard !== undefined ? this._visualOpacityStandard : 0.8;
                         ctx.drawImage(this.maskCanvasRef, rect.x, rect.y, rect.w, rect.h);
                     }
                     ctx.restore();
@@ -609,10 +610,25 @@ app.registerExtension({
                     if (!this.maskCanvasRef || this.maskCanvasRef.width === 0) return Promise.resolve(false);
                     
                     const wgt = this.widgets ? this.widgets.find(w => w.name === "mask_data") : null;
-                    if (!wgt || !wgt.value || !wgt.value.startsWith("data:image")) return Promise.resolve(false);
+                    if (!wgt || !wgt.value) return Promise.resolve(false);
+
+                    let maskSrc = "";
+                    if (wgt.value.startsWith("{")) {
+                        try {
+                            const parsed = JSON.parse(wgt.value);
+                            maskSrc = parsed.mask || "";
+                        } catch (e) {
+                            console.error("Failed to parse mask JSON in syncMaskToCanvas", e);
+                            maskSrc = wgt.value;
+                        }
+                    } else {
+                        maskSrc = wgt.value;
+                    }
+
+                    if (!maskSrc || !maskSrc.startsWith("data:image")) return Promise.resolve(false);
 
                     return new Promise((resolve) => {
-                        const mctx = this.maskCanvasRef.getContext("2d", { willReadFrequently: true });
+                        const mctx = this.maskCanvasRef.getContext("2d");
                         const img = new Image();
                         img.onload = () => {
                             mctx.globalCompositeOperation = "source-over";
@@ -629,24 +645,32 @@ app.registerExtension({
                             resolve(true);
                         };
                         img.onerror = () => resolve(false);
-                        img.src = wgt.value;
+                        img.src = maskSrc;
                     });
                 };
 
                 node.saveHistoryRef = function() {
-                    const data = this.maskCanvasRef.toDataURL(); 
-                    if (this.historyIndex < this.history.length - 1) {
-                        this.history = this.history.slice(0, this.historyIndex + 1); 
-                    }
-                    this.history.push(data); 
-                    const historyLimit = getMaskHistoryLimit(this.maskCanvasRef);
-                    while (this.history.length > historyLimit) this.history.shift(); 
-                    this.historyIndex = this.history.length - 1; 
-                    
-                    if (this.widgets) {
-                        const mData = this.widgets.find(w => w.name === "mask_data");
-                        if (mData) mData.value = data;
-                    }
+                    if (!this.maskCanvasRef) return;
+                    this.maskCanvasRef.toBlob((blob) => {
+                        if (!blob) return;
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const data = reader.result;
+                            if (this.historyIndex < this.history.length - 1) {
+                                this.history = this.history.slice(0, this.historyIndex + 1); 
+                            }
+                            this.history.push(data); 
+                            const historyLimit = getMaskHistoryLimit(this.maskCanvasRef);
+                            while (this.history.length > historyLimit) this.history.shift(); 
+                            this.historyIndex = this.history.length - 1; 
+                            
+                            if (this.widgets) {
+                                const mData = this.widgets.find(w => w.name === "mask_data");
+                                if (mData) mData.value = data;
+                            }
+                        };
+                        reader.readAsDataURL(blob);
+                    });
                 };
 
 
@@ -691,15 +715,21 @@ app.registerExtension({
                         }
                     }
 
+                    if (!imageUrl) {
+                        const safeId = String(node.id).replace(/[^a-zA-Z0-9_-]+/g, "_");
+                        imageUrl = `/view?filename=aio_wired_${safeId}.png&type=input&subfolder=aio_input`;
+                    }
+
                     if (imageUrl) {
                         const stripT = (str) => str ? str.replace(/([&?])t=\d+/, '').replace(/&$/, '').replace(/\?$/, '') : null;
-                        const cleanCurrent = stripT(node._currentLiveUrl);
                         const cleanNew = stripT(imageUrl);
 
-                        if (cleanCurrent !== cleanNew) {
-                            node._currentLiveUrl = cleanNew; 
+                        if (node._currentLiveUrl !== imageUrl) {
+                            node._currentLiveUrl = imageUrl; 
                             if (node.imgTagRef) {
                                 const sep = cleanNew.includes('?') ? '&' : '?';
+                                const tsMatch = imageUrl.match(/[&?]t=(\d+)/);
+                                const ts = tsMatch ? tsMatch[1] : String(Date.now());
                                 
                                 const originalOnload = node.imgTagRef.onload;
                                 node.imgTagRef.onload = (e) => {
@@ -714,7 +744,7 @@ app.registerExtension({
                                     node.imgTagRef.onload = originalOnload;
                                 };
 
-                                node.imgTagRef.src = cleanNew + sep + 't=' + Date.now();
+                                node.imgTagRef.src = cleanNew + sep + 't=' + ts;
                             }
                         }
                     }
@@ -732,7 +762,7 @@ app.registerExtension({
                 node.tempHistoryImg = new Image();
 
                 node.tempHistoryImg.onload = () => {
-                    const mctx = node.maskCanvasRef.getContext("2d", { willReadFrequently: true });
+                    const mctx = node.maskCanvasRef.getContext("2d");
                     mctx.globalCompositeOperation = "source-over";
                     mctx.clearRect(0, 0, node.maskCanvasRef.width, node.maskCanvasRef.height); 
                     mctx.drawImage(node.tempHistoryImg, 0, 0, node.maskCanvasRef.width, node.maskCanvasRef.height);
@@ -751,7 +781,8 @@ app.registerExtension({
                     get image() { return findW("image"); },
                     get enable_resize() { return findW("enable_resize"); },
                     get cr_enable() { return findW("cr_enable"); },
-                    get resize() { return node.widgets ? node.widgets.filter(w => w && ["width", "height", "pad_left", "pad_top", "pad_right", "pad_bottom", "upscale_method", "keep_proportion", "scale_by", "condition", "feathering", "divisible_by", "enable_resize"].includes(w.name)) : []; }
+                    get crop_position() { return findW("crop_position"); },
+                    get resize() { return node.widgets ? node.widgets.filter(w => w && ["width", "height", "pad_left", "pad_top", "pad_right", "pad_bottom", "upscale_method", "keep_proportion", "scale_by", "condition", "feathering", "divisible_by", "enable_resize", "crop_position"].includes(w.name)) : []; }
                 };
 
                 const removeNativeUploadWidget = () => {
@@ -789,11 +820,39 @@ app.registerExtension({
 
                 const formatAspect = (w, h) => {
                     if (!w || !h) return "[?]";
+                    w = Math.round(w);
+                    h = Math.round(h);
+
+                    // 1. Exact standard monitor resolutions mapping
+                    if (w === 3440 && h === 1440) return "[21:9]";
+                    if (w === 1440 && h === 3440) return "[9:21]";
+                    if (w === 2560 && h === 1080) return "[21:9]";
+                    if (w === 1080 && h === 2560) return "[9:21]";
+                    if (w === 5120 && h === 2160) return "[21:9]";
+                    if (w === 2160 && h === 5120) return "[9:21]";
+                    if (w === 3840 && h === 1600) return "[21:9]";
+                    if (w === 1600 && h === 3840) return "[9:21]";
+                    
+                    if (w === 5120 && h === 1440) return "[32:9]";
+                    if (w === 1440 && h === 5120) return "[9:32]";
+                    if (w === 3840 && h === 1080) return "[32:9]";
+                    if (w === 1080 && h === 3840) return "[9:32]";
+
+                    // 2. Exact mathematically simple standard ratios
                     const divisor = gcd(w, h);
-                    const rw = Math.round(w / divisor);
-                    const rh = Math.round(h / divisor);
-                    if (rw <= 64 && rh <= 64) return `[${rw}:${rh}]`;
-                    if (w <= h) return `[~1:${cleanRatioNumber(h / w)}]`;
+                    const rw = w / divisor;
+                    const rh = h / divisor;
+                    const standards = ["1:1", "16:9", "9:16", "16:10", "10:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5"];
+                    const ratioStr = `${rw}:${rh}`;
+                    if (standards.includes(ratioStr)) {
+                        return `[${ratioStr}]`;
+                    }
+
+                    // 3. Fallback for custom cropped aspect ratios
+                    if (w === h) return "[1:1]";
+                    if (w < h) {
+                        return `[~1:${cleanRatioNumber(h / w)}]`;
+                    }
                     return `[~${cleanRatioNumber(w / h)}:1]`;
                 };
 
@@ -960,6 +1019,10 @@ app.registerExtension({
 
                 const wrapper = document.createElement("div"); node.wrapperRef = wrapper; 
                 wrapper.style.cssText = `position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; background: transparent; box-sizing: border-box; padding: 4px 0px; gap: 4px; pointer-events: auto; user-select: none; -webkit-user-select: none; overflow: visible;`;
+                wrapper.addEventListener("contextmenu", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
                 const applyNodeDomSideOutline = () => {
                     wrapper.style.border = "none";
                     wrapper.style.outline = "none";
@@ -1408,13 +1471,18 @@ app.registerExtension({
                         
                         if (widgets.mode && widgets.mode.value === m) {
                             if (m === "Mask") {
-                                node.isFullscreen = !node.isFullscreen; 
-                                if (node.applyZoomPanRef) node.applyZoomPanRef();
-                                updateUI();
+                                openTrixMaskEditor(node);
                             } else if (m === "Base") {
                                 node._showCameraRawMenu = !node._showCameraRawMenu;
                                 updateUI();
                                 if (app.graph) app.graph.setDirtyCanvas(true, true);
+                            } else if (m === "Resize") {
+                                const isWired = node.inputs && node.inputs.some(inp => inp && inp.name === "in_image" && inp.link !== null);
+                                if (isWired) {
+                                    alert("Please disconnect the in_image cable (incoming image) to use the manual canvas editor.");
+                                    return;
+                                }
+                                openTrixCropEditor(node, widgets.crop_data);
                             }
                         }
                     };
@@ -1426,7 +1494,7 @@ app.registerExtension({
                 const TOOLBAR_HEIGHT_RESIZE = 26;
                 const TOOLBAR_BG_DARK = TRIX_PANEL_SOFT;
                 const TOOLBAR_BG_LIGHT = TRIX_PANEL_SOFT;
-                toolBar.style.cssText = `display: grid; grid-template-columns: minmax(30px, 1fr) auto auto auto auto auto auto; gap: 4px; align-items: center; background: ${TRIX_PANEL_SOFT}; padding: 1px 6px 2px 6px; border: none; border-radius: 0; width: 100%; min-height: 26px; height: auto; box-sizing: border-box; overflow: hidden; position: relative;`;
+                toolBar.style.cssText = `display: grid; grid-template-columns: minmax(30px, 1fr) auto auto auto auto auto auto auto; gap: 4px; align-items: center; background: ${TRIX_PANEL_SOFT}; padding: 1px 6px 2px 6px; border: none; border-radius: 0; width: 100%; min-height: 26px; height: auto; box-sizing: border-box; overflow: hidden; position: relative;`;
 
                 
                 const slidersContainer = document.createElement("div");
@@ -1471,9 +1539,111 @@ app.registerExtension({
                 slidersContainer.append(brushRow.wrap, hardnessRow.wrap);
 
                 const colorPick = document.createElement("div"); colorPick.id = "colorPick";
-                const colors = ["#00FF00", "#FF0000", "#FFFFFF", "#000000"]; let colorIdx = 1; node.maskColor = colors[colorIdx];
-                colorPick.style.cssText = `width: 18px; height: 18px; border: 2px solid #555; border-radius: 50%; background-color: ${colors[colorIdx]}; cursor: pointer; flex-shrink: 0; box-sizing: border-box;`;
-                colorPick.onclick = () => { colorIdx = (colorIdx + 1) % colors.length; node.maskColor = colors[colorIdx]; colorPick.style.backgroundColor = node.maskColor; };
+                const colors = ["#FF0000", "#00FF00", "#FFFFFF", "#000000"];
+                if (node._colorIdx === undefined) {
+                    if (node.maskColor) {
+                        const idx = colors.indexOf(node.maskColor.toUpperCase());
+                        node._colorIdx = idx !== -1 ? idx : 0;
+                    } else {
+                        node._colorIdx = 0;
+                    }
+                }
+                node.maskColor = colors[node._colorIdx];
+                colorPick.style.cssText = `width: 18px; height: 18px; border: 2px solid #555; border-radius: 50%; background-color: ${node.maskColor}; cursor: pointer; flex-shrink: 0; box-sizing: border-box;`;
+                colorPick.onclick = () => { 
+                    node._colorIdx = (node._colorIdx + 1) % colors.length; 
+                    node.maskColor = colors[node._colorIdx]; 
+                    colorPick.style.backgroundColor = node.maskColor; 
+                    if (app.graph) app.graph.setDirtyCanvas(true, true);
+                };
+                node.updateColorPickBgRef = () => {
+                    if (node._colorIdx !== undefined) {
+                        node.maskColor = colors[node._colorIdx];
+                        colorPick.style.backgroundColor = node.maskColor;
+                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                    }
+                };
+
+                if (node._visualOpacityStandard === undefined) {
+                    node._visualOpacityStandard = 0.8;
+                }
+
+                colorPick.oncontextmenu = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const existing = document.getElementById("trix-visual-opacity-popup");
+                    if (existing) existing.remove();
+
+                    const popup = document.createElement("div");
+                    popup.id = "trix-visual-opacity-popup";
+                    popup.style.cssText = `
+                        position: fixed;
+                        background: ${TRIX_PANEL_SOFT};
+                        border: 1px solid #444;
+                        border-radius: 6px;
+                        padding: 8px 10px;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
+                        z-index: 10000;
+                        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+                        width: 160px;
+                        box-sizing: border-box;
+                    `;
+
+                    const rect = colorPick.getBoundingClientRect();
+                    popup.style.left = `${rect.left}px`;
+                    popup.style.top = `${rect.bottom + 5}px`;
+
+                    const title = document.createElement("div");
+                    title.innerText = "Mask Alpha";
+                    title.style.cssText = "color: #ccc; font-size: 10px; font-weight: bold; font-family: sans-serif; user-select: none;";
+
+                    const row = document.createElement("div");
+                    row.style.cssText = "display: flex; align-items: center; gap: 6px; width: 100%;";
+
+                    const slider = document.createElement("input");
+                    slider.type = "range";
+                    slider.min = "0";
+                    slider.max = "100";
+                    slider.value = Math.round(node._visualOpacityStandard * 100);
+                    slider.style.cssText = `flex: 1; cursor: pointer; min-width: 10px; width: 100%; margin: 0; accent-color: ${TRIX_ACCENT};`;
+
+                    const valLabel = document.createElement("div");
+                    valLabel.innerText = `${Math.round(node._visualOpacityStandard * 100)}%`;
+                    valLabel.style.cssText = "color: #fff; font-size: 10px; font-family: monospace; width: 28px; text-align: right; user-select: none;";
+
+                    const updateOpacity = (val) => {
+                        node._visualOpacityStandard = val / 100;
+                        valLabel.innerText = `${val}%`;
+                        if (node.isFullscreen && node.maskCanvasRef) {
+                            node.maskCanvasRef.style.opacity = node._isMaskHidden ? "0" : String(node._visualOpacityStandard);
+                        }
+                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                    };
+
+                    slider.oninput = (ev) => {
+                        updateOpacity(ev.target.value);
+                    };
+
+                    slider.addEventListener("mousedown", (ev) => ev.stopPropagation());
+                    slider.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+
+                    row.append(slider, valLabel);
+                    popup.append(title, row);
+                    document.body.appendChild(popup);
+
+                    const closePopup = (ev) => {
+                        if (!popup.contains(ev.target)) {
+                            popup.remove();
+                            document.removeEventListener("pointerdown", closePopup, { capture: true });
+                        }
+                    };
+                    setTimeout(() => {
+                        document.addEventListener("pointerdown", closePopup, { capture: true });
+                    }, 50);
+                };
 
                 const ICON_SIZE = "16.5px"; 
                 const iconStyle = `width:${ICON_SIZE}; height:${ICON_SIZE}; position:absolute; pointer-events:none;`;
@@ -1492,7 +1662,7 @@ app.registerExtension({
 
                 const toggleMaskBtn = createBtn(svgEyeMask, "Hold to hide mask");
                 toggleMaskBtn.onpointerdown = (e) => { node._isMaskHidden = true; if (node.isFullscreen) maskCanvas.style.opacity = "0"; if (app.graph) app.graph.setDirtyCanvas(true, true); };
-                const restoreMask = () => { if (!node._isMaskHidden) return; node._isMaskHidden = false; if (node.isFullscreen) maskCanvas.style.opacity = "0.8"; if (app.graph) app.graph.setDirtyCanvas(true, true); };
+                const restoreMask = () => { if (!node._isMaskHidden) return; node._isMaskHidden = false; if (node.isFullscreen) maskCanvas.style.opacity = String(node._visualOpacityStandard !== undefined ? node._visualOpacityStandard : 0.8); if (app.graph) app.graph.setDirtyCanvas(true, true); };
                 toggleMaskBtn.onpointerup = restoreMask; toggleMaskBtn.onpointerleave = restoreMask;
 
                 const undoBtn = createBtn(svgUndoMask, "Undo"); 
@@ -1504,7 +1674,12 @@ app.registerExtension({
                 eraserBtn.onmouseleave = () => { eraserBtn.style.background = node.isEraser ? "#33789a" : "rgba(42, 42, 47, 0.65)"; };
                 eraserBtn.onclick = () => { node.isEraser = !node.isEraser; eraserBtn.style.background = node.isEraser ? "#33789a" : "rgba(42, 42, 47, 0.65)"; eraserBtn.style.color = node.isEraser ? "#fff" : "#ccc"; };
 
-                toolBar.append(slidersContainer, colorPick, toggleMaskBtn, undoBtn, redoBtn, eraserBtn, clearBtn);
+                const svgWandMask = `<svg viewBox="0 0 24 24" fill="currentColor" style="${iconStyle}"><path d="M12 2 C12 8.5 8.5 12 2 12 C8.5 12 12 15.5 12 22 C12 15.5 15.5 12 22 12 C15.5 12 12 8.5 12 2 Z"></path></svg>`;
+                const aiBtn = createBtn(svgWandMask, "Open Advanced Mask Editor");
+                aiBtn.style.borderColor = "#33789a";
+                aiBtn.onclick = () => { openTrixMaskEditor(node); };
+
+                toolBar.append(slidersContainer, colorPick, toggleMaskBtn, undoBtn, redoBtn, eraserBtn, clearBtn, aiBtn);
                 headerContainer.append(tabs, toolBar);
 
                 const getW = (name) => node.widgets ? node.widgets.find(w => w && w.name === name) : undefined;
@@ -1661,7 +1836,6 @@ app.registerExtension({
                         
                         sliderEl.addEventListener("mousedown", (e) => e.stopPropagation());
                         sliderEl.addEventListener("pointerdown", (e) => e.stopPropagation());
-                        inputEl.addEventListener("mousedown", (e) => e.stopPropagation());
                         inputEl.addEventListener("pointerdown", (e) => e.stopPropagation());
                         
                         const updateVals = (val) => {
@@ -1677,6 +1851,46 @@ app.registerExtension({
 
                         inputEl.onchange = (e) => updateVals(e.target.value);
                         sliderEl.oninput = (e) => updateVals(e.target.value);
+
+                        inputEl.oncontextmenu = (e) => e.preventDefault();
+                        inputEl.onmousedown = (e) => {
+                            e.stopPropagation();
+                            if (e.button === 0 || e.button === 2) {
+                                const startY = e.clientY;
+                                const startVal = (wgt && wgt.value !== undefined && wgt.value !== null) ? parseInt(wgt.value) : defVal;
+                                let hasMoved = false;
+
+                                const onMouseMove = (ev) => {
+                                    const dy = ev.clientY - startY;
+                                    if (!hasMoved && Math.abs(dy) > 3) {
+                                        hasMoved = true;
+                                        document.body.style.userSelect = "none";
+                                        document.body.style.cursor = "ns-resize";
+                                    }
+                                    if (hasMoved) {
+                                        const step = 4;
+                                        let newVal = startVal - Math.round(dy / 2) * step;
+                                        newVal = Math.max(minVal, Math.min(maxVal, newVal));
+                                        updateVals(newVal);
+                                    }
+                                };
+
+                                const onMouseUp = (ev) => {
+                                    document.removeEventListener("mousemove", onMouseMove);
+                                    document.removeEventListener("mouseup", onMouseUp);
+                                    if (hasMoved) {
+                                        document.body.style.userSelect = "";
+                                        document.body.style.cursor = "";
+                                        ev.preventDefault();
+                                        ev.stopPropagation();
+                                        inputEl.blur();
+                                    }
+                                };
+
+                                document.addEventListener("mousemove", onMouseMove);
+                                document.addEventListener("mouseup", onMouseUp);
+                            }
+                        };
                         
                         const doReset = () => updateVals(defVal);
                         sliderEl.ondblclick = doReset;
@@ -1787,7 +2001,664 @@ app.registerExtension({
                     return row;
                 };
 
-                const enableResizeRow = createToggleRow("Enable Resize", "enable_resize");
+                const createCropPositionRow = () => {
+                    const wgt = getW("crop_position");
+                    const row = document.createElement("div");
+                    row.style.cssText = `display: none; flex-direction: column; margin-bottom: 4px; position: relative;`;
+
+                    const btn = document.createElement("button");
+                    const svgChevron = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left: auto;"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+                    
+                    const formatVal = (val) => {
+                        if (val === undefined || val === null) return "Center";
+                        const strVal = String(val);
+                        if (strVal === "center") return "Center";
+                        return strVal.replace("-", " ");
+                    };
+                    
+                    btn.innerHTML = `<span style="font-size: 11px; font-weight: 500;">Crop Position: ${formatVal(wgt ? wgt.value : "center")}</span>${svgChevron}`;
+                    btn.style.cssText = `background: ${TRIX_CONTROL}; color: #ccc; border: 1px solid ${TRIX_BORDER}; border-radius: 4px; padding: 4px 8px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; width: 100%; transition: 0.2s; box-sizing: border-box; min-height: 26px;`;
+                    
+                    btn.onmouseenter = () => { btn.style.background = "#333a45"; btn.style.color = "#fff"; };
+                    btn.onmouseleave = () => { btn.style.background = TRIX_CONTROL; btn.style.color = "#ccc"; };
+
+                    const dropdown = document.createElement("div");
+                    dropdown.style.cssText = `
+                        position: fixed; z-index: 10000000;
+                        background: #151515; border: 1px solid #444; border-radius: 6px; 
+                        display: none; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px;
+                        box-shadow: 0 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;
+                        width: 120px; aspect-ratio: 1;
+                    `;
+                    document.body.appendChild(dropdown);
+                    node.cropPositionDropdown = dropdown;
+
+                    dropdown.oncontextmenu = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    };
+                    dropdown.addEventListener("click", (e) => e.stopPropagation());
+                    dropdown.addEventListener("mousedown", (e) => e.stopPropagation());
+                    dropdown.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                    // Only 5 clickable options, corners are placeholders
+                    const options = [
+                        { placeholder: true },
+                        { label: "Top", id: "top" },
+                        { placeholder: true },
+                        { label: "Left", id: "left" },
+                        { label: "Center", id: "center", displayLabel: "Center" },
+                        { label: "Right", id: "right" },
+                        { placeholder: true },
+                        { label: "Bottom", id: "bottom" },
+                        { placeholder: true }
+                    ];
+
+                    const gridButtons = [];
+
+                    const updateHighlight = (activeId) => {
+                        gridButtons.forEach(b => {
+                            const isAct = b.getAttribute("data-id") === activeId;
+                            b.setAttribute("data-active", isAct ? "true" : "false");
+                            b.style.background = isAct ? "#33789a" : "#2a2a2f";
+                        });
+                    };
+
+                    options.forEach(opt => {
+                        if (opt.placeholder) {
+                            const placeholder = document.createElement("div");
+                            placeholder.style.cssText = "visibility: hidden; aspect-ratio: 1; width: 100%;";
+                            dropdown.appendChild(placeholder);
+                            return;
+                        }
+
+                        const item = document.createElement("button");
+                        item.title = opt.displayLabel || opt.label;
+                        item.setAttribute("data-id", opt.id);
+                        item.style.cssText = "background: #2a2a2f; border: 1px solid #444; border-radius: 4px; cursor: pointer; transition: 0.15s; aspect-ratio: 1; width: 100%; box-sizing: border-box; padding: 0;";
+                        gridButtons.push(item);
+
+                        item.onmouseenter = () => {
+                            const isActive = item.getAttribute("data-active") === "true";
+                            if (!isActive) {
+                                item.style.background = "#333a45";
+                            }
+                        };
+                        item.onmouseleave = () => {
+                            const isActive = item.getAttribute("data-active") === "true";
+                            if (isActive) {
+                                item.style.background = "#33789a";
+                            } else {
+                                item.style.background = "#2a2a2f";
+                            }
+                        };
+
+                        item.onclick = (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const val = opt.id;
+                            if (wgt) {
+                                wgt.value = val;
+                            }
+                            btn.querySelector("span").innerText = `Crop Position: ${opt.displayLabel || opt.label}`;
+                            dropdown.style.display = "none";
+                            
+                            const panel = row.closest(".trix-resize-panel");
+                            if (panel) {
+                                panel.style.overflow = "auto";
+                            }
+
+                            updateHighlight(val);
+                            if (app.graph) app.graph.setDirtyCanvas(true, true);
+                        };
+                        dropdown.appendChild(item);
+                    });
+
+                    const updateDropdownPosition = () => {
+                        const rect = btn.getBoundingClientRect();
+                        dropdown.style.left = `${Math.max(0, Math.min(window.innerWidth - 130, rect.left + rect.width / 2 - 60))}px`;
+                        dropdown.style.top = `${Math.max(0, Math.min(window.innerHeight - 130, rect.bottom + 4))}px`;
+                    };
+
+                    btn.onclick = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const show = dropdown.style.display === "grid";
+                        if (!show) {
+                            updateDropdownPosition();
+                            dropdown.style.display = "grid";
+                        } else {
+                            dropdown.style.display = "none";
+                        }
+                        
+                        const panel = row.closest(".trix-resize-panel");
+                        if (panel) {
+                            panel.style.overflow = show ? "auto" : "visible";
+                        }
+
+                        if (!show && wgt) {
+                            updateHighlight(wgt.value);
+                        }
+                    };
+
+                    document.addEventListener("click", () => {
+                        dropdown.style.display = "none";
+                        const panel = row.closest(".trix-resize-panel");
+                        if (panel) {
+                            panel.style.overflow = "auto";
+                        }
+                    });
+
+                    node._syncHTMLWithWidgets.push(() => {
+                        if (wgt && wgt.value !== undefined) {
+                            btn.querySelector("span").innerText = `Crop Position: ${formatVal(wgt.value)}`;
+                            updateHighlight(wgt.value);
+                        }
+                    });
+
+                    if (wgt) {
+                        updateHighlight(wgt.value);
+                    }
+
+                    row.append(btn);
+                    return row;
+                };
+
+                const openCustomColorPicker = (initialColor, onApply) => {
+                    const popup = document.createElement("div");
+                    popup.style.cssText = `
+                        position: fixed; z-index: 100000; background: #1a1a1f; 
+                        border: 1px solid #444; border-radius: 8px; padding: 12px; 
+                        display: flex; flex-direction: column; align-items: center; gap: 10px; width: 220px;
+                        box-shadow: 0 10px 40px rgba(0,0,0,0.8); font-family: sans-serif;
+                    `;
+
+                    const rect = colorBtn.getBoundingClientRect();
+                    popup.style.left = `${Math.min(window.innerWidth - 240, rect.left)}px`;
+                    popup.style.top = `${Math.min(window.innerHeight - 340, rect.bottom + 5)}px`;
+
+                    const title = document.createElement("div");
+                    title.innerText = "Pad color";
+                    title.style.cssText = "color: #fff; font-size: 11px; font-weight: bold; user-select: none;";
+                    popup.appendChild(title);
+
+                    const hexToRgb = (hex) => {
+                        hex = hex.replace("#", "");
+                        if (hex.length === 3) {
+                            hex = hex.split("").map(x => x + x).join("");
+                        }
+                        const num = parseInt(hex, 16);
+                        return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+                    };
+
+                    const rgbToHex = (r, g, b) => {
+                        return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+                    };
+
+                    const rgbToHsv = (r, g, b) => {
+                        r /= 255; g /= 255; b /= 255;
+                        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+                        let h, s, v = max;
+                        const d = max - min;
+                        s = max === 0 ? 0 : d / max;
+                        if (max === min) {
+                            h = 0;
+                        } else {
+                            switch (max) {
+                                case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                                case g: h = (b - r) / d + 2; break;
+                                case b: h = (r - g) / d + 4; break;
+                            }
+                            h /= 6;
+                        }
+                        return { h: h * 360, s: s * 100, v: v * 100 };
+                    };
+
+                    const hsvToRgb = (h, s, v) => {
+                        s /= 100; v /= 100;
+                        let r, g, b;
+                        const i = Math.floor(h / 60);
+                        const f = h / 60 - i;
+                        const p = v * (1 - s);
+                        const q = v * (1 - f * s);
+                        const t = v * (1 - (1 - f) * s);
+                        switch (i % 6) {
+                            case 0: r = v; g = t; b = p; break;
+                            case 1: r = q; g = v; b = p; break;
+                            case 2: r = p; g = v; b = t; break;
+                            case 3: r = p; g = q; b = v; break;
+                            case 4: r = t; g = p; b = v; break;
+                            case 5: r = v; g = p; b = q; break;
+                        }
+                        return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+                    };
+
+                    let curHex = initialColor;
+                    let { r, g, b } = hexToRgb(curHex);
+                    let { h: curH, s: curS, v: curV } = rgbToHsv(r, g, b);
+
+                    const swatchesContainer = document.createElement("div");
+                    swatchesContainer.style.cssText = "display: grid; grid-template-columns: repeat(12, 1fr); gap: 3px; width: 100%;";
+
+                    const swatchColors = [
+                        "#ffffff", "#e0e0e0", "#c0c0c0", "#a0a0a0", "#808080", "#707070", "#505050", "#303030", "#202020", "#151515", "#0a0a0a", "#000000",
+                        "#ff3b30", "#ff9500", "#ffcc00", "#4cd964", "#5ac8fa", "#007aff", "#5856d6", "#af52de", "#ff2d55", "#ff5e3a", "#ff954f", "#ffdb4c",
+                        "#8e8e93", "#63da38", "#1badf8", "#005ecb", "#3f2b96", "#8a2be2", "#a0522d", "#d2b48c", "#cd853f", "#bc8f8f", "#8b4513", "#5c4033"
+                    ];
+
+                    swatchColors.forEach(color => {
+                        const swatch = document.createElement("div");
+                        swatch.style.cssText = `background: ${color}; border-radius: 3px; aspect-ratio: 1; cursor: pointer; border: 1px solid rgba(255,255,255,0.1);`;
+                        swatch.onclick = () => {
+                            updateSelectedColor(color);
+                        };
+                        swatchesContainer.appendChild(swatch);
+                    });
+                    popup.appendChild(swatchesContainer);
+
+                    const pickerContainer = document.createElement("div");
+                    pickerContainer.style.cssText = "display: flex; gap: 10px; width: 100%; height: 130px; box-sizing: border-box;";
+
+                    const svCanvas = document.createElement("canvas");
+                    svCanvas.width = 160;
+                    svCanvas.height = 130;
+                    svCanvas.style.cssText = "border-radius: 4px; border: 1px solid #444; cursor: crosshair; flex: 1; min-width: 0;";
+                    pickerContainer.appendChild(svCanvas);
+
+                    const hueCanvas = document.createElement("canvas");
+                    hueCanvas.width = 18;
+                    hueCanvas.height = 130;
+                    hueCanvas.style.cssText = "border-radius: 4px; border: 1px solid #444; cursor: ns-resize; flex-shrink: 0;";
+                    pickerContainer.appendChild(hueCanvas);
+
+                    popup.appendChild(pickerContainer);
+
+                    const textInput = document.createElement("input");
+                    textInput.type = "text";
+                    textInput.value = curHex;
+                    textInput.style.cssText = "background: #000; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-family: monospace; font-size: 11px; outline: none; width: 100%; box-sizing: border-box; text-align: center;";
+                    textInput.onchange = (e) => {
+                        let val = e.target.value;
+                        if (!val.startsWith("#")) val = "#" + val;
+                        if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                            updateSelectedColor(val);
+                        }
+                    };
+                    popup.appendChild(textInput);
+
+                    const btnRow = document.createElement("div");
+                    btnRow.style.cssText = "display: flex; gap: 6px; width: 100%; margin-top: 4px;";
+
+                    const applyBtn = document.createElement("button");
+                    applyBtn.type = "button";
+                    applyBtn.innerText = "Apply";
+                    applyBtn.style.cssText = `background: #33789a; color: #fff; border: none; border-radius: 4px; padding: 6px; font-size: 11px; font-weight: bold; cursor: pointer; flex: 1; transition: 0.15s;`;
+                    applyBtn.onmouseenter = () => { applyBtn.style.background = "#3f8eb4"; };
+                    applyBtn.onmouseleave = () => { applyBtn.style.background = "#33789a"; };
+                    applyBtn.onclick = (e) => {
+                        e.preventDefault();
+                        onApply(curHex);
+                        popup.remove();
+                    };
+
+                    const cancelBtn = document.createElement("button");
+                    cancelBtn.type = "button";
+                    cancelBtn.innerText = "Cancel";
+                    cancelBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; font-size: 11px; cursor: pointer; flex: 1; transition: 0.15s;";
+                    cancelBtn.onmouseenter = () => { cancelBtn.style.background = "#333a45"; cancelBtn.style.color = "#fff"; };
+                    cancelBtn.onmouseleave = () => { cancelBtn.style.background = "#2a2a2f"; cancelBtn.style.color = "#ccc"; };
+                    cancelBtn.onclick = (e) => {
+                        e.preventDefault();
+                        popup.remove();
+                    };
+
+                    btnRow.append(cancelBtn, applyBtn);
+                    popup.appendChild(btnRow);
+
+                    popup.addEventListener("mousedown", (ev) => ev.stopPropagation());
+                    popup.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+
+                    const drawHue = () => {
+                        const hctx = hueCanvas.getContext("2d");
+                        const w = hueCanvas.width;
+                        const h = hueCanvas.height;
+                        hctx.clearRect(0, 0, w, h);
+
+                        const grad = hctx.createLinearGradient(0, 0, 0, h);
+                        grad.addColorStop(0, "red");
+                        grad.addColorStop(0.17, "yellow");
+                        grad.addColorStop(0.33, "green");
+                        grad.addColorStop(0.5, "cyan");
+                        grad.addColorStop(0.67, "blue");
+                        grad.addColorStop(0.83, "magenta");
+                        grad.addColorStop(1, "red");
+
+                        hctx.fillStyle = grad;
+                        hctx.fillRect(0, 0, w, h);
+
+                        const indicatorY = (curH / 360) * h;
+                        hctx.strokeStyle = "#fff";
+                        hctx.lineWidth = 2;
+                        hctx.beginPath();
+                        hctx.moveTo(0, indicatorY);
+                        hctx.lineTo(w, indicatorY);
+                        hctx.stroke();
+
+                        hctx.strokeStyle = "#000";
+                        hctx.lineWidth = 1;
+                        hctx.stroke();
+                    };
+
+                    const drawSV = () => {
+                        const sctx = svCanvas.getContext("2d");
+                        const w = svCanvas.width;
+                        const h = svCanvas.height;
+                        sctx.clearRect(0, 0, w, h);
+
+                        const baseRgb = hsvToRgb(curH, 100, 100);
+                        sctx.fillStyle = `rgb(${baseRgb.r}, ${baseRgb.g}, ${baseRgb.b})`;
+                        sctx.fillRect(0, 0, w, h);
+
+                        const gradW = sctx.createLinearGradient(0, 0, w, 0);
+                        gradW.addColorStop(0, "#fff");
+                        gradW.addColorStop(1, "rgba(255,255,255,0)");
+                        sctx.fillStyle = gradW;
+                        sctx.fillRect(0, 0, w, h);
+
+                        const gradB = sctx.createLinearGradient(0, 0, 0, h);
+                        gradB.addColorStop(0, "rgba(0,0,0,0)");
+                        gradB.addColorStop(1, "#000");
+                        sctx.fillStyle = gradB;
+                        sctx.fillRect(0, 0, w, h);
+
+                        const curX = (curS / 100) * w;
+                        const curY = ((100 - curV) / 100) * h;
+
+                        sctx.strokeStyle = "#fff";
+                        sctx.lineWidth = 2;
+                        sctx.beginPath();
+                        sctx.arc(curX, curY, 4, 0, Math.PI * 2);
+                        sctx.stroke();
+
+                        sctx.strokeStyle = "#000";
+                        sctx.lineWidth = 1;
+                        sctx.stroke();
+                    };
+
+                    const updateSelectedColor = (hex) => {
+                        curHex = hex;
+                        textInput.value = hex;
+                        const rgb = hexToRgb(hex);
+                        const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+                        curH = hsv.h;
+                        curS = hsv.s;
+                        curV = hsv.v;
+                        drawHue();
+                        drawSV();
+                    };
+
+                    let draggingHue = false;
+                    const handleHueMove = (e) => {
+                        const bounds = hueCanvas.getBoundingClientRect();
+                        let y = e.clientY - bounds.top;
+                        y = Math.max(0, Math.min(bounds.height, y));
+                        curH = (y / bounds.height) * 360;
+                        
+                        const rgb = hsvToRgb(curH, curS, curV);
+                        curHex = rgbToHex(rgb.r, rgb.g, rgb.b);
+                        textInput.value = curHex;
+
+                        drawHue();
+                        drawSV();
+                    };
+
+                    hueCanvas.onmousedown = (e) => {
+                        draggingHue = true;
+                        handleHueMove(e);
+                        
+                        const onMouseMove = (ev) => {
+                            if (draggingHue) handleHueMove(ev);
+                        };
+                        const onMouseUp = () => {
+                            draggingHue = false;
+                            document.removeEventListener("mousemove", onMouseMove);
+                            document.removeEventListener("mouseup", onMouseUp);
+                        };
+                        document.addEventListener("mousemove", onMouseMove);
+                        document.addEventListener("mouseup", onMouseUp);
+                    };
+
+                    let draggingSV = false;
+                    const handleSVMove = (e) => {
+                        const bounds = svCanvas.getBoundingClientRect();
+                        let x = e.clientX - bounds.left;
+                        let y = e.clientY - bounds.top;
+                        x = Math.max(0, Math.min(bounds.width, x));
+                        y = Math.max(0, Math.min(bounds.height, y));
+
+                        curS = (x / bounds.width) * 100;
+                        curV = 100 - (y / bounds.height) * 100;
+
+                        const rgb = hsvToRgb(curH, curS, curV);
+                        curHex = rgbToHex(rgb.r, rgb.g, rgb.b);
+                        textInput.value = curHex;
+
+                        drawSV();
+                    };
+
+                    svCanvas.onmousedown = (e) => {
+                        draggingSV = true;
+                        handleSVMove(e);
+                        
+                        const onMouseMove = (ev) => {
+                            if (draggingSV) handleSVMove(ev);
+                        };
+                        const onMouseUp = () => {
+                            draggingSV = false;
+                            document.removeEventListener("mousemove", onMouseMove);
+                            document.removeEventListener("mouseup", onMouseUp);
+                        };
+                        document.addEventListener("mousemove", onMouseMove);
+                        document.addEventListener("mouseup", onMouseUp);
+                    };
+
+                    drawHue();
+                    drawSV();
+
+                    document.body.appendChild(popup);
+
+                    const checkOutsideClick = (e) => {
+                        if (!popup.contains(e.target) && !colorBtn.contains(e.target)) {
+                            popup.remove();
+                            document.removeEventListener("pointerdown", checkOutsideClick, { capture: true });
+                        }
+                    };
+                    setTimeout(() => {
+                        document.addEventListener("pointerdown", checkOutsideClick, { capture: true });
+                    }, 50);
+                };
+
+                const createCustomPadRow = () => {
+                    const row = document.createElement("div");
+                    row.style.cssText = `display: none; flex-direction: column; background: ${TRIX_CONTROL}; padding: 8px; margin-bottom: 4px; border-radius: 4px; border: 1px solid ${TRIX_BORDER}; box-shadow: inset 0 1px 2px rgba(0,0,0,0.32); flex-shrink: 0;`;
+
+                    const grid = document.createElement("div");
+                    grid.style.cssText = "display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; box-sizing: border-box; align-items: center;";
+
+                    const wgtL = getW("pad_left");
+                    const wgtT = getW("pad_top");
+                    const wgtR = getW("pad_right");
+                    const wgtB = getW("pad_bottom");
+
+                    const createPadCell = (wgt, sideLetter) => {
+                        const cell = document.createElement("div");
+                        cell.style.cssText = "position: relative; width: 100%; display: flex; align-items: center;";
+
+                        const letter = document.createElement("span");
+                        letter.innerText = sideLetter;
+                        letter.style.cssText = "position: absolute; left: 8px; color: #888; font-weight: bold; font-family: monospace; font-size: 11px; user-select: none; pointer-events: none;";
+
+                        const input = document.createElement("input");
+                        input.type = "number";
+                        input.value = wgt ? wgt.value : 0;
+                        input.style.cssText = "background: #000; color: #fff; border: 1px solid #444; border-radius: 4px; width: 100%; height: 26px; box-sizing: border-box; text-align: center; font-family: monospace; font-size: 11px; outline: none; padding-left: 16px; padding-right: 4px;";
+                        input.className = "trix-num";
+
+                        input.onchange = (e) => {
+                            let val = parseInt(e.target.value) || 0;
+                            val = Math.max(0, Math.min(16384, val));
+                            input.value = val;
+                            if (wgt) wgt.value = val;
+                            if (app.graph) app.graph.setDirtyCanvas(true, true);
+                            if (node.updateResLabelTextRef) node.updateResLabelTextRef();
+                        };
+
+                        input.oncontextmenu = (e) => e.preventDefault();
+                        input.onmousedown = (e) => {
+                            if (e.button === 0 || e.button === 2) {
+                                const startY = e.clientY;
+                                const startVal = wgt ? (parseInt(wgt.value) || 0) : 0;
+                                let hasMoved = false;
+
+                                const onMouseMove = (ev) => {
+                                    const dy = ev.clientY - startY;
+                                    if (!hasMoved && Math.abs(dy) > 3) {
+                                        hasMoved = true;
+                                        document.body.style.userSelect = "none";
+                                        document.body.style.cursor = "ns-resize";
+                                    }
+                                    if (hasMoved) {
+                                        const step = 4;
+                                        let newVal = startVal - Math.round(dy / 2) * step;
+                                        newVal = Math.max(0, Math.min(16384, newVal));
+                                        input.value = newVal;
+                                        if (wgt) wgt.value = newVal;
+                                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                                        if (node.updateResLabelTextRef) node.updateResLabelTextRef();
+                                    }
+                                };
+
+                                const onMouseUp = (ev) => {
+                                    document.removeEventListener("mousemove", onMouseMove);
+                                    document.removeEventListener("mouseup", onMouseUp);
+                                    if (hasMoved) {
+                                        document.body.style.userSelect = "";
+                                        document.body.style.cursor = "";
+                                        ev.preventDefault();
+                                        ev.stopPropagation();
+                                        input.blur();
+                                    }
+                                };
+
+                                document.addEventListener("mousemove", onMouseMove);
+                                document.addEventListener("mouseup", onMouseUp);
+                            }
+                        };
+
+                        cell.append(letter, input);
+
+                        node._syncHTMLWithWidgets.push(() => {
+                            if (wgt && wgt.value !== undefined) {
+                                input.value = wgt.value;
+                            }
+                        });
+
+                        return { cell, input };
+                    };
+
+                    const cellT = createPadCell(wgtT, "T");
+                    const cellL = createPadCell(wgtL, "L");
+                    const cellR = createPadCell(wgtR, "R");
+                    const cellB = createPadCell(wgtB, "B");
+
+                    const createCorner = () => {
+                        const div = document.createElement("div");
+                        div.style.cssText = "visibility: hidden;";
+                        return div;
+                    };
+
+                    const centerCell = document.createElement("div");
+                    centerCell.style.cssText = "display: flex; gap: 8px; justify-content: center; align-items: center; width: 100%; height: 100%;";
+
+                    const resetBtn = document.createElement("button");
+                    resetBtn.type = "button";
+                    resetBtn.title = "Reset Padding";
+                    resetBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><polyline points="3 3 3 8 8 8"></polyline></svg>`;
+                    resetBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; box-sizing: border-box; transition: 0.2s;";
+                    resetBtn.onmouseenter = () => { resetBtn.style.background = "#333a45"; resetBtn.style.color = "#fff"; };
+                    resetBtn.onmouseleave = () => { resetBtn.style.background = "#2a2a2f"; resetBtn.style.color = "#ccc"; };
+
+                    resetBtn.onclick = (e) => {
+                        e.preventDefault();
+                        [cellT, cellL, cellR, cellB].forEach(c => {
+                            c.input.value = 0;
+                            c.input.onchange({ target: { value: 0 } });
+                        });
+                    };
+
+                    window.colorBtn = document.createElement("button");
+                    colorBtn.type = "button";
+                    colorBtn.title = "Pad Color";
+                    colorBtn.style.cssText = "border-radius: 4px; border: 1px solid #444; cursor: pointer; aspect-ratio: 1; width: 24px; height: 24px; box-sizing: border-box; padding: 0; transition: transform 0.1s;";
+                    colorBtn.onmouseenter = () => { colorBtn.style.transform = "scale(1.1)"; };
+                    colorBtn.onmouseleave = () => { colorBtn.style.transform = "scale(1.0)"; };
+
+                    const updateColorBtnBackground = () => {
+                        const cropDataWgt = getW("crop_data");
+                        let cdata = {};
+                        if (cropDataWgt && cropDataWgt.value) {
+                            try { cdata = JSON.parse(cropDataWgt.value); } catch(e) {}
+                        }
+                        const col = cdata.pad_color;
+                        if (col) {
+                            colorBtn.style.background = col;
+                        } else {
+                            colorBtn.style.background = "linear-gradient(135deg, red, yellow, green, cyan, blue, magenta)";
+                        }
+                    };
+
+                    updateColorBtnBackground();
+
+                    node._syncHTMLWithWidgets.push(() => {
+                        updateColorBtnBackground();
+                    });
+
+                    colorBtn.onclick = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        const cropDataWgt = getW("crop_data");
+                        let cdata = {};
+                        if (cropDataWgt && cropDataWgt.value) {
+                            try { cdata = JSON.parse(cropDataWgt.value); } catch(ev) {}
+                        }
+                        const currentColor = cdata.pad_color || "#808080";
+                        
+                        openCustomColorPicker(currentColor, (selectedColor) => {
+                            cdata.pad_color = selectedColor;
+                            if (cropDataWgt) {
+                                cropDataWgt.value = JSON.stringify(cdata);
+                            }
+                            updateColorBtnBackground();
+                            if (app.graph) app.graph.setDirtyCanvas(true, true);
+                        });
+                    };
+
+                    centerCell.append(resetBtn, colorBtn);
+
+                    grid.append(
+                        createCorner(), cellT.cell, createCorner(),
+                        cellL.cell, centerCell, cellR.cell,
+                        createCorner(), cellB.cell, createCorner()
+                    );
+
+                    row.appendChild(grid);
+                    return row;
+                };
+
+                const customPadRow = createCustomPadRow();
+
+                const enableResizeRow = createToggleRow("Enable Settings", "enable_resize");
                 
                 const openCPOBtn = document.createElement("button");
                 openCPOBtn.innerText = "Open CPO Editor";
@@ -1813,6 +2684,7 @@ app.registerExtension({
 
                 const upscaleMethodRow = createInputRow("Upscale Method", "upscale_method", "select", ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"]);
                 const kpRow = createInputRow("Options", "keep_proportion", "select", ["stretch", "resize", "scale_by", "pad", "pad_edge_pixel", "crop", "pad_for_outpainting"]);
+                const cropPositionRow = createCropPositionRow();
                 const scaleByRow = createScaleByRow();
                 const conditionRow = createInputRow("Condition", "condition", "select", ["always", "downscale if bigger", "upscale if smaller", "if bigger area", "if smaller area"]);
                 const featherRow = createInputRow("Feathering", "feathering", "number", [0, 250, 0]);
@@ -1822,6 +2694,8 @@ app.registerExtension({
                     enableResizeRow,
                     openCPOBtn,
                     kpRow,
+                    cropPositionRow,
+                    customPadRow,
                     scaleByRow,
                     widthRow, heightRow, 
                     padLeftRow, padTopRow, padRightRow, padBottomRow, 
@@ -1833,19 +2707,23 @@ app.registerExtension({
                     const kpValue = kpWgt ? kpWgt.value : "resize";
                     const isPadOut = kpValue === "pad_for_outpainting";
                     const isScaleBy = kpValue === "scale_by";
+                    const isCrop = kpValue === "crop";
 
                     const padDisplay = isPadOut ? "flex" : "none";
                     const normalDisplay = (!isPadOut && !isScaleBy) ? "flex" : "none";
                     const scaleDisplay = isScaleBy ? "flex" : "none";
+                    const cropPosDisplay = isCrop ? "flex" : "none";
                     
                     if (widthRow) widthRow.style.display = normalDisplay;
                     if (heightRow) heightRow.style.display = normalDisplay;
                     if (scaleByRow) scaleByRow.style.display = scaleDisplay;
+                    if (cropPositionRow) cropPositionRow.style.display = cropPosDisplay;
+                    if (customPadRow) customPadRow.style.display = padDisplay;
                     
-                    if (padLeftRow) padLeftRow.style.display = padDisplay;
-                    if (padTopRow) padTopRow.style.display = padDisplay;
-                    if (padRightRow) padRightRow.style.display = padDisplay;
-                    if (padBottomRow) padBottomRow.style.display = padDisplay;
+                    if (padLeftRow) padLeftRow.style.display = "none";
+                    if (padTopRow) padTopRow.style.display = "none";
+                    if (padRightRow) padRightRow.style.display = "none";
+                    if (padBottomRow) padBottomRow.style.display = "none";
                     
                     if (conditionRow) conditionRow.style.display = normalDisplay;
                     if (featherRow) featherRow.style.display = padDisplay;
@@ -1864,7 +2742,7 @@ app.registerExtension({
                 cameraRawPanel.className = "trix-resize-panel";
                 cameraRawPanel.style.cssText = `display: none; flex-direction: column; width: 100%; height: 100%; padding: 4px 8px; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; pointer-events: auto; background: ${TRIX_PANEL_SOFT}; min-height: 0;`;
 
-                const crEnableRow = createToggleRow("Enable Filter", "cr_enable");
+                const crEnableRow = createToggleRow("Enable Settings", "cr_enable");
                 cameraRawPanel.appendChild(crEnableRow);
 
                 const openCRBtn = document.createElement("button");
@@ -1997,11 +2875,12 @@ app.registerExtension({
                 
                 const maskCanvas = document.createElement("canvas");
                 maskCanvas.style.cssText = "position: absolute; top: 0; left: 0; cursor: none; z-index: 2; pointer-events: none;";
-                const mctx = maskCanvas.getContext("2d", { willReadFrequently: true }); node.maskCanvasRef = maskCanvas; maskCanvas.oncontextmenu = (e) => e.preventDefault();
+                const mctx = maskCanvas.getContext("2d"); node.maskCanvasRef = maskCanvas; maskCanvas.oncontextmenu = (e) => e.preventDefault();
 
                 const brushCursor = document.createElement("div");
-                brushCursor.style.cssText = "position: absolute; border: 1.5px solid rgba(255, 255, 255, 0.9); border-radius: 50%; pointer-events: none; display: none; z-index: 100; transform: translate(-50%, -50%); box-sizing: border-box; box-shadow: 0 0 2px rgba(0,0,0,0.8) inset, 0 0 2px rgba(0,0,0,0.8);";
-                brushCursor.innerHTML = `<div style="position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; background: rgba(255, 255, 255, 0.9); border-radius: 50%; transform: translate(-50%, -50%); box-sizing: border-box; box-shadow: 0 0 1px rgba(0,0,0,0.8);"></div>`;
+                brushCursor.classList.add("trix-brush-cursor");
+                brushCursor.style.cssText = "position: absolute; border: 1px solid rgba(255, 255, 255, 0.85); border-radius: 50%; pointer-events: none; display: none; z-index: 100; transform: translate(-50%, -50%); box-sizing: border-box; box-shadow: 0 0 1px rgba(0, 0, 0, 0.5); background: transparent;";
+                brushCursor.innerHTML = `<div style="position: absolute; top: 50%; left: 50%; width: 2px; height: 2px; background: rgba(255, 255, 255, 0.95); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 1px rgba(0,0,0,0.7);"></div>`;
                 
                 imgContainer.append(imgTag, maskCanvas, brushCursor);
 
@@ -2057,13 +2936,16 @@ app.registerExtension({
                     brushCursor.style.width = `${visualSize}px`; 
                     brushCursor.style.height = `${visualSize}px`; 
                     
-                    const hardStop = Math.max(0, node.brushHardness * 100);
-                    brushCursor.style.background = `radial-gradient(circle, rgba(255,255,255,0.3) ${hardStop}%, rgba(255,255,255,0) 100%)`;
-                    brushCursor.style.borderColor = `rgba(255, 255, 255, ${0.3 + (node.brushHardness * 0.7)})`;
+                    const innerHardnessSize = visualSize * node.brushHardness;
+                    const showInner = node.brushHardness < 1.0 && node.brushHardness > 0;
+                    brushCursor.innerHTML = `
+                        <div style="position: absolute; top: 50%; left: 50%; width: 2px; height: 2px; background: rgba(255, 255, 255, 0.95); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 1px rgba(0,0,0,0.7);"></div>
+                        ${showInner ? `<div style="position: absolute; top: 50%; left: 50%; width: ${innerHardnessSize}px; height: ${innerHardnessSize}px; border: 0.75px solid rgba(255, 255, 255, 0.4); border-radius: 50%; transform: translate(-50%, -50%); box-sizing: border-box; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25);"></div>` : ""}
+                    `;
                 };
 
-                maskCanvas.addEventListener("pointerenter", () => { const mode = widgets.mode ? widgets.mode.value : "Base"; if (mode === "Mask" && (!node.isPreviewHidden || node.isFullscreen)) brushCursor.style.display = "block"; });
-                maskCanvas.addEventListener("pointerleave", () => { brushCursor.style.display = "none"; });
+                maskCanvas.addEventListener("pointerenter", (e) => { const mode = widgets.mode ? widgets.mode.value : "Base"; if (mode === "Mask" && (!node.isPreviewHidden || node.isFullscreen)) { brushCursor.style.display = "block"; node._lastPointerEvent = e; } });
+                maskCanvas.addEventListener("pointerleave", () => { brushCursor.style.display = "none"; node._lastPointerEvent = null; });
 
                 node.onResize = function(size) {
                     if (size[0] < 200) size[0] = 200;
@@ -2146,15 +3028,23 @@ app.registerExtension({
                 window.addEventListener("resize", node._onResizeWindow); window.addEventListener("keydown", node._onKeydownWindow);
 
                 const saveHistory = () => { 
-                    const data = maskCanvas.toDataURL(); 
-                    if (node.historyIndex < node.history.length - 1) node.history = node.history.slice(0, node.historyIndex + 1); 
-                    node.history.push(data); 
-                    if (node.history.length > 15) node.history.shift(); 
-                    node.historyIndex = node.history.length - 1; 
-                    
-                    if (widgets.mask_data) {
-                        widgets.mask_data.value = data; 
-                    }
+                    if (!maskCanvas) return;
+                    maskCanvas.toBlob((blob) => {
+                        if (!blob) return;
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const data = reader.result;
+                            if (node.historyIndex < node.history.length - 1) node.history = node.history.slice(0, node.historyIndex + 1); 
+                            node.history.push(data); 
+                            if (node.history.length > 15) node.history.shift(); 
+                            node.historyIndex = node.history.length - 1; 
+                            
+                            if (widgets.mask_data) {
+                                widgets.mask_data.value = data; 
+                            }
+                        };
+                        reader.readAsDataURL(blob);
+                    });
                 };
                 node.saveHistoryRef = saveHistory;
 
@@ -2253,6 +3143,7 @@ app.registerExtension({
                 maskCanvas.onpointerdown = (e) => {
                     if (app.canvas) app.canvas.allow_dragcanvas = false;
                     try { maskCanvas.setPointerCapture(e.pointerId); } catch(err){}
+                    node._lastPointerEvent = e;
                     
                     const mode = widgets.mode ? widgets.mode.value : "Base"; if (mode !== "Mask") return;
 
@@ -2301,17 +3192,18 @@ app.registerExtension({
                     mctx.globalCompositeOperation = (node.isEraser || node._isRmbErasing) ? "destination-out" : "source-over"; 
                     
                     if (blurAmount > 0) {
+                        const offset = Math.max(maskCanvas.width, maskCanvas.height) + node.brushSize + 500;
                         mctx.shadowBlur = blurAmount;
                         mctx.shadowColor = node.maskColor;
-                        mctx.shadowOffsetX = 100000;
-                        mctx.shadowOffsetY = 100000;
+                        mctx.shadowOffsetX = offset;
+                        mctx.shadowOffsetY = offset;
                         mctx.strokeStyle = "rgba(0,0,0,1)"; 
                         mctx.fillStyle = "rgba(0,0,0,1)";
 
                         if (e.shiftKey && node._lastClickPos) { 
-                            mctx.beginPath(); mctx.moveTo(node._lastClickPos.x - 100000, node._lastClickPos.y - 100000); mctx.lineTo(x - 100000, y - 100000); mctx.stroke(); 
+                            mctx.beginPath(); mctx.moveTo(node._lastClickPos.x - offset, node._lastClickPos.y - offset); mctx.lineTo(x - offset, y - offset); mctx.stroke(); 
                         } else { 
-                            mctx.beginPath(); mctx.arc(x - 100000, y - 100000, drawSize / 2, 0, Math.PI * 2); mctx.fill(); 
+                            mctx.beginPath(); mctx.arc(x - offset, y - offset, drawSize / 2, 0, Math.PI * 2); mctx.fill(); 
                         }
                     } else {
                         mctx.shadowBlur = 0;
@@ -2336,6 +3228,7 @@ app.registerExtension({
 
                 maskCanvas.onpointermove = (e) => {
                     const mode = widgets.mode ? widgets.mode.value : "Base"; if (mode !== "Mask") return;
+                    node._lastPointerEvent = e;
                     if (isPanning) { node._fsPanX += e.movementX; node._fsPanY += e.movementY; applyZoomPan(); e.preventDefault(); e.stopPropagation(); return; }
                     
                     if (resizingBrush) { 
@@ -2364,7 +3257,21 @@ app.registerExtension({
                     const { x, y, cssX, cssY } = getCanvasCoord(e); let cursorX = cssX; let cursorY = cssY; let currentX = x; let currentY = y;
                     
                     if (!drawing) { brushCursor.style.left = `${cssX}px`; brushCursor.style.top = `${cssY}px`; brushCursor.style.display = "block"; return; }
-                    if (node._wasShiftDrawing && !e.shiftKey) { drawing = false; node._shiftLockAxis = null; node._wasShiftDrawing = false; saveHistory(); if (app.graph) app.graph.setDirtyCanvas(true, true); return; }
+                    if (node._wasShiftDrawing && !e.shiftKey) {
+                        drawing = false;
+                        node._shiftLockAxis = null;
+                        node._wasShiftDrawing = false;
+                        saveHistory();
+                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                        const updatePos = () => {
+                            const { cssX, cssY } = getCanvasCoord(e);
+                            brushCursor.style.left = `${cssX}px`;
+                            brushCursor.style.top = `${cssY}px`;
+                        };
+                        requestAnimationFrame(updatePos);
+                        setTimeout(updatePos, 20);
+                        return;
+                    }
                     if (e.shiftKey) { node._wasShiftDrawing = true; if (!node._shiftLockAxis) { if (Math.abs(currentX - node._dragStartX) > Math.abs(currentY - node._dragStartY)) node._shiftLockAxis = 'y'; else if (Math.abs(currentY - node._dragStartY) > Math.abs(currentX - node._dragStartX)) node._shiftLockAxis = 'x'; } if (node._shiftLockAxis === 'y') { currentY = node._dragStartY; cursorY = currentY * currentScale; } else if (node._shiftLockAxis === 'x') { currentX = node._dragStartX; cursorX = currentX * currentScale; } } else { node._shiftLockAxis = null; node._dragStartX = currentX; node._dragStartY = currentY; }
                     brushCursor.style.left = `${cursorX}px`; brushCursor.style.top = `${cursorY}px`; brushCursor.style.display = "block";
                     
@@ -2377,16 +3284,17 @@ app.registerExtension({
                     mctx.globalCompositeOperation = (node.isEraser || node._isRmbErasing) ? "destination-out" : "source-over"; 
                     
                     if (blurAmount > 0) {
+                        const offset = Math.max(maskCanvas.width, maskCanvas.height) + node.brushSize + 500;
                         mctx.shadowBlur = blurAmount;
                         mctx.shadowColor = node.maskColor;
-                        mctx.shadowOffsetX = 100000;
-                        mctx.shadowOffsetY = 100000;
+                        mctx.shadowOffsetX = offset;
+                        mctx.shadowOffsetY = offset;
                         mctx.strokeStyle = "rgba(0,0,0,1)"; 
                         mctx.fillStyle = "rgba(0,0,0,1)";
                         
                         mctx.beginPath(); 
-                        mctx.moveTo(node._lp[0] - 100000, node._lp[1] - 100000); 
-                        mctx.lineTo(currentX - 100000, currentY - 100000); 
+                        mctx.moveTo(node._lp[0] - offset, node._lp[1] - offset); 
+                        mctx.lineTo(currentX - offset, currentY - offset); 
                         mctx.stroke();
                     } else {
                         mctx.shadowBlur = 0;
@@ -2408,11 +3316,24 @@ app.registerExtension({
                     node._lp = [currentX, currentY]; node._lastClickPos = { x: currentX, y: currentY }; e.preventDefault(); e.stopPropagation(); if (node.requestDirtyCanvas) node.requestDirtyCanvas();
                 };
 
-                node._pointerUpHandler = (e) => { 
+                node._pointerUpHandler = (e) => {
+                    node._lastPointerEvent = e;
                     if (app.canvas) app.canvas.allow_dragcanvas = true;
-                    if (isPanning) { isPanning = false; e.preventDefault(); } 
-                    if (resizingBrush) { resizingBrush = false; if (document.pointerLockElement === maskCanvas) document.exitPointerLock(); e.preventDefault(); } 
-                    if (drawing) { drawing = false; node._isRmbErasing = false; try { maskCanvas.releasePointerCapture(e.pointerId); } catch(err){} saveHistory(); } 
+                    if (isPanning) { isPanning = false; e.preventDefault(); }
+                    if (resizingBrush) { resizingBrush = false; if (document.pointerLockElement === maskCanvas) document.exitPointerLock(); e.preventDefault(); }
+                    if (drawing) {
+                        drawing = false;
+                        node._isRmbErasing = false;
+                        try { maskCanvas.releasePointerCapture(e.pointerId); } catch(err){}
+                        saveHistory();
+                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        const { cssX, cssY } = getCanvasCoord(e);
+                        brushCursor.style.left = `${cssX}px`;
+                        brushCursor.style.top = `${cssY}px`;
+                    }
                 };
                 window.addEventListener("pointerup", node._pointerUpHandler, { capture: true });
 
@@ -2427,8 +3348,15 @@ app.registerExtension({
                     toolBar.style.background = (mode === "Base" || mode === "Resize") ? TOOLBAR_BG_LIGHT : TOOLBAR_BG_DARK;
 
                     if (filePanel) {
-                        filePanel.style.display = isInImageConnected ? "none" : "flex";
-                        if (!isInImageConnected && node.refreshImagePickerRef) node.refreshImagePickerRef();
+                        filePanel.style.display = "flex";
+                        if (node.refreshImagePickerRef) node.refreshImagePickerRef();
+                        if (isInImageConnected) {
+                            filePanel.style.opacity = "0.6";
+                            filePanel.style.pointerEvents = "none";
+                        } else {
+                            filePanel.style.opacity = "1.0";
+                            filePanel.style.pointerEvents = "auto";
+                        }
                     }
 
                     if (widgets.image) { 
@@ -2550,7 +3478,7 @@ app.registerExtension({
                             viewPort.style.justifyContent = "center"; viewPort.style.overflow = "hidden"; 
                             
                             imgTag.style.opacity = node.isPreviewHidden ? "0" : "1"; 
-                            maskCanvas.style.opacity = node._isMaskHidden ? "0" : "0.8"; 
+                            maskCanvas.style.opacity = node._isMaskHidden ? "0" : String(node._visualOpacityStandard !== undefined ? node._visualOpacityStandard : 0.8); 
                             viewPort.style.display = "flex"; node.resLabelRef.style.display = "none";
                             
                             hardnessRow.wrap.style.display = "flex"; 
@@ -2577,6 +3505,7 @@ app.registerExtension({
 
                     if (widgets.mask_data) { hideWidget(widgets.mask_data); }
                     if (widgets.crop_data) { hideWidget(widgets.crop_data); }
+                    if (widgets.crop_position) { hideWidget(widgets.crop_position); }
                     if (widgets.cr_enable) { hideWidget(widgets.cr_enable); }
                     if (widgets.hsl_active) { hideWidget(widgets.hsl_active); }
                     if (widgets.hsl_data) { hideWidget(widgets.hsl_data); }
@@ -2663,7 +3592,7 @@ app.registerExtension({
                                 const blobUrl = URL.createObjectURL(blob); const tempImg = new Image();
                                 tempImg.onload = () => {
                                     if (maskCanvas.width !== tempImg.naturalWidth) { maskCanvas.width = tempImg.naturalWidth; maskCanvas.height = tempImg.naturalHeight; alignCanvas(); }
-                                    const mctx = maskCanvas.getContext("2d", { willReadFrequently: true });
+                                    const mctx = maskCanvas.getContext("2d");
                                     mctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height); const tcanvas = document.createElement('canvas'); tcanvas.width = tempImg.naturalWidth; tcanvas.height = tempImg.naturalHeight; const tctx = tcanvas.getContext('2d', { willReadFrequently: true }); tctx.drawImage(tempImg, 0, 0); const imgData = tctx.getImageData(0, 0, tcanvas.width, tcanvas.height); const pixels = imgData.data;
                                     let r = 255, g = 0, b = 0; if (node.maskColor) { const hex = node.maskColor.replace(/^#/, ""); const bigint = parseInt(hex, 16); r = (bigint >> 16) & 255; g = (bigint >> 8) & 255; b = bigint & 255; }
                                     let hasAlpha = false; for (let i = 0; i < pixels.length; i += 4) { if (pixels[i + 3] < 250) { pixels[i] = r; pixels[i+1] = g; pixels[i+2] = b; pixels[i+3] = 255; hasAlpha = true; } else { pixels[i+3] = 0; } }
@@ -2728,6 +3657,7 @@ app.registerExtension({
                 window.addEventListener("paste", pasteHandler, { capture: true });
                 document.addEventListener("paste", pasteHandler, { capture: true });
                 const onRemoved = node.onRemoved; node.onRemoved = function() { 
+                    if (node.cropPositionDropdown) { node.cropPositionDropdown.remove(); }
                     if (wrapper.parentNode === document.body) { document.body.removeChild(wrapper); }
                     window.removeEventListener("paste", pasteHandler, true);
                     document.removeEventListener("paste", pasteHandler, true); 
@@ -2774,6 +3704,8 @@ app.registerExtension({
                     });
                 }
                 if (origOnDrawForeground) origOnDrawForeground.apply(this, arguments);
+
+
 
                 if (!this.flags.collapsed && this.drawTrixPreview) {
                     this.drawTrixPreview(ctx, true);
@@ -2847,7 +3779,7 @@ app.registerExtension({
                                 setTimeout(() => {
                                     const mImg = new Image();
                                     mImg.onload = () => {
-                                        const mctx = node.maskCanvasRef.getContext("2d", { willReadFrequently: true });
+                                        const mctx = node.maskCanvasRef.getContext("2d");
                                         const tcanvas = document.createElement('canvas');
                                         tcanvas.width = mImg.naturalWidth; tcanvas.height = mImg.naturalHeight;
                                         const tctx = tcanvas.getContext('2d', { willReadFrequently: true });
@@ -2914,7 +3846,7 @@ app.registerExtension({
                     setTimeout(() => {
                         const mImg = new Image();
                         mImg.onload = () => {
-                            const mctx = node.maskCanvasRef.getContext("2d", { willReadFrequently: true });
+                            const mctx = node.maskCanvasRef.getContext("2d");
                             const tcanvas = document.createElement('canvas');
                             tcanvas.width = mImg.naturalWidth; tcanvas.height = mImg.naturalHeight;
                             const tctx = tcanvas.getContext('2d', { willReadFrequently: true });

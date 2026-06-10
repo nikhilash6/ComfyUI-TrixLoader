@@ -1,0 +1,8 @@
+transformers>=4.38.0
+huggingface_hub
+safetensors
+transparent-background
+ben2
+albumentations
+pymatting
+timm

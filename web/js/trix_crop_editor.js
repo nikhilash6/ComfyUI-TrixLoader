@@ -6,7 +6,7 @@ const CPO_ACCENT_HOVER = "#3f8eb4";
 const CPO_BUTTON_BG = "#2a2a2f";
 const CPO_BUTTON_HOVER = "#333a45";
 const trixCropSafeId = (value) => String(value ?? "node").replace(/[^a-zA-Z0-9_-]+/g, "_") || "node";
-const trixCropFilename = (nodeId) => `aio_crop_${trixCropSafeId(nodeId)}.png`;
+const trixCropFilename = (nodeId) => `trix_edited_${trixCropSafeId(nodeId)}.png`;
 const applyCpoButtonHover = (btn, isActive = () => false, base = CPO_BUTTON_BG, hover = CPO_BUTTON_HOVER) => {
     btn.onmouseenter = () => {
         if (!isActive()) {
@@ -24,13 +24,148 @@ const applyCpoButtonHover = (btn, isActive = () => false, base = CPO_BUTTON_BG, 
         }
     };
 };
+function getDecontUrl(src) {
+    if (!src) return null;
+    if (src.startsWith("data:") || src.startsWith("blob:") || src.startsWith("http:") || src.startsWith("https:") || src.startsWith("/")) {
+        return src;
+    }
+    return `/view?filename=${encodeURIComponent(src)}&type=input&t=${Date.now()}`;
+}
+
 const applyCpoPrimaryHover = (btn) => {
     btn.onmouseenter = () => { btn.style.background = CPO_ACCENT_HOVER; };
     btn.onmouseleave = () => { btn.style.background = CPO_ACCENT; };
 };
 
+function getPixelLuminance(data, index) {
+    const r = data[index];
+    const g = data[index + 1];
+    const b = data[index + 2];
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+function findSmartSnapX(targetX, yStart, yEnd, origImageData, searchRadius = 15) {
+    if (!origImageData) return targetX;
+    const { data, width, height } = origImageData;
+    const startY = Math.max(0, Math.min(height - 1, Math.round(yStart)));
+    const endY = Math.max(0, Math.min(height - 1, Math.round(yEnd)));
+    if (startY === endY) return targetX;
+
+    const N = 30;
+    const ySamples = [];
+    for (let i = 0; i < N; i++) {
+        ySamples.push(Math.round(startY + (i / (N - 1)) * (endY - startY)));
+    }
+
+    const minSearchX = Math.max(1, Math.min(width - 2, Math.round(targetX - searchRadius)));
+    const maxSearchX = Math.max(1, Math.min(width - 2, Math.round(targetX + searchRadius)));
+
+    const avgGrad = {};
+    for (let x = minSearchX; x <= maxSearchX; x++) {
+        let sumGrad = 0;
+        for (const y of ySamples) {
+            const idxLeft = ((y * width) + (x - 1)) * 4;
+            const idxRight = ((y * width) + (x + 1)) * 4;
+            const lLeft = getPixelLuminance(data, idxLeft);
+            const lRight = getPixelLuminance(data, idxRight);
+            sumGrad += Math.abs(lRight - lLeft);
+        }
+        avgGrad[x] = sumGrad / N;
+    }
+
+    const threshold = 15;
+    const peaks = [];
+    for (let x = minSearchX + 1; x < maxSearchX; x++) {
+        const val = avgGrad[x];
+        if (val > threshold && val >= avgGrad[x - 1] && val >= avgGrad[x + 1]) {
+            peaks.push({ x, val });
+        }
+    }
+
+    if (peaks.length > 0) {
+        let closestPeak = null;
+        let minCDist = Infinity;
+        for (const p of peaks) {
+            const dist = Math.abs(p.x - targetX);
+            if (dist < minCDist) {
+                minCDist = dist;
+                closestPeak = p.x;
+            }
+        }
+        if (closestPeak !== null) {
+            return closestPeak;
+        }
+    }
+
+    return targetX;
+}
+
+function findSmartSnapY(targetY, xStart, xEnd, origImageData, searchRadius = 15) {
+    if (!origImageData) return targetY;
+    const { data, width, height } = origImageData;
+    const startX = Math.max(0, Math.min(width - 1, Math.round(xStart)));
+    const endX = Math.max(0, Math.min(width - 1, Math.round(xEnd)));
+    if (startX === endX) return targetY;
+
+    const N = 30;
+    const xSamples = [];
+    for (let i = 0; i < N; i++) {
+        xSamples.push(Math.round(startX + (i / (N - 1)) * (endX - startX)));
+    }
+
+    const minSearchY = Math.max(1, Math.min(height - 2, Math.round(targetY - searchRadius)));
+    const maxSearchY = Math.max(1, Math.min(height - 2, Math.round(targetY + searchRadius)));
+
+    const avgGrad = {};
+    for (let y = minSearchY; y <= maxSearchY; y++) {
+        let sumGrad = 0;
+        for (const x of xSamples) {
+            const idxTop = (((y - 1) * width) + x) * 4;
+            const idxBottom = (((y + 1) * width) + x) * 4;
+            const lTop = getPixelLuminance(data, idxTop);
+            const lBottom = getPixelLuminance(data, idxBottom);
+            sumGrad += Math.abs(lBottom - lTop);
+        }
+        avgGrad[y] = sumGrad / N;
+    }
+
+    const threshold = 15;
+    const peaks = [];
+    for (let y = minSearchY + 1; y < maxSearchY; y++) {
+        const val = avgGrad[y];
+        if (val > threshold && val >= avgGrad[y - 1] && val >= avgGrad[y + 1]) {
+            peaks.push({ y, val });
+        }
+    }
+
+    if (peaks.length > 0) {
+        let closestPeak = null;
+        let minCDist = Infinity;
+        for (const p of peaks) {
+            const dist = Math.abs(p.y - targetY);
+            if (dist < minCDist) {
+                minCDist = dist;
+                closestPeak = p.y;
+            }
+        }
+        if (closestPeak !== null) {
+            return closestPeak;
+        }
+    }
+
+    return targetY;
+}
+
 export function openTrixCropEditor(node, cropWidget) {
     const abortCtrl = new AbortController();
+    let camera = { x: 0, y: 0, zoom: 1 };
+    let baseFitScale = 1;
+    let isFirstLaunch = true;
+    let lastWorkspaceW = 0;
+    let lastWorkspaceH = 0;
+    let isDragging = false; let dragHandle = null; 
+    let startMx = 0, startMy = 0; let startCrop = null; let isPanning = false;
+    let updateRecenterBtnText = null;
     if (!node.imgTagRef || !node.imgTagRef.naturalWidth) {
         alert("Please load an image first!");
         return;
@@ -43,12 +178,31 @@ export function openTrixCropEditor(node, cropWidget) {
     let origW = node.imgTagRef.naturalWidth;
     let origH = node.imgTagRef.naturalHeight;
 
+    let oldCropX = 0;
+    let oldCropY = 0;
+    
+    let origImageData = null;
+    const initOrigImageData = () => {
+        if (!origW || !origH) return;
+        const cvs = document.createElement("canvas");
+        cvs.width = origW;
+        cvs.height = origH;
+        const ctx = cvs.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(origImgObj, 0, 0);
+        try {
+            origImageData = ctx.getImageData(0, 0, origW, origH);
+        } catch (e) {
+            console.warn("Could not get image data for smart snapping (possible CORS issue):", e);
+        }
+    };
     node.properties = node.properties || {};
     let cropData = { x: 0, y: 0, w: origW, h: origH, color: node.properties.trix_crop_color || "#666666" };
     try {
         if (cropWidget && cropWidget.value && cropWidget.value !== "{}") {
             const parsed = JSON.parse(cropWidget.value);
             cropData = { ...cropData, ...parsed };
+            oldCropX = parsed.x || 0;
+            oldCropY = parsed.y || 0;
         }
     } catch(e) {}
 
@@ -57,10 +211,14 @@ export function openTrixCropEditor(node, cropWidget) {
         position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
         background-color: #1a1a1a;
         background-image: linear-gradient(45deg, #222 25%, transparent 25%, transparent 75%, #222 75%, #222),
-                          linear-gradient(45deg, #222 25%, transparent 25%, transparent 75%, #222 75%, #222);
+        linear-gradient(45deg, #222 25%, transparent 25%, transparent 75%, #222 75%, #222);
         background-size: 16px 16px; background-position: 0 0, 8px 8px;
         z-index: 10000; display: flex; font-family: sans-serif; user-select: none;
     `;
+    overlay.oncontextmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
 
     const sidebar = document.createElement("div");
     sidebar.style.cssText = `
@@ -78,6 +236,8 @@ export function openTrixCropEditor(node, cropWidget) {
     let isLocked = false;
     let lockRatio = cropData.w / cropData.h;
     let activePreset = null;
+
+
 
     const presetRow = document.createElement("div");
     presetRow.style.cssText = "display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 15px;";
@@ -139,49 +299,80 @@ export function openTrixCropEditor(node, cropWidget) {
 
     const dropdown = document.createElement("div");
     dropdown.style.cssText = `
-        position: absolute; top: 100%; left: 0; right: 0; background: #1a1a1f; 
-        border: 1px solid #444; border-radius: 4px; z-index: 1000; display: none; 
-        flex-direction: column; max-height: 200px; overflow-y: auto; margin-top: 4px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;
+        position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+        background: #151515; border: 1px solid #444; border-radius: 6px; z-index: 1000; 
+        display: none; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; margin-top: 4px;
+        width: 120px; aspect-ratio: 1;
     `;
+    dropdown.oncontextmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
 
     const options = [
-        { label: "Free", id: "free" },
-        { label: "Top left", id: "top-left" },
+        { placeholder: true },
         { label: "Top", id: "top" },
-        { label: "Top right", id: "top-right" },
+        { placeholder: true },
         { label: "Left", id: "left" },
-        { label: "Center crop", id: "center" },
+        { label: "Center", id: "center" },
         { label: "Right", id: "right" },
-        { label: "Bottom left", id: "bottom-left" },
+        { placeholder: true },
         { label: "Bottom", id: "bottom" },
-        { label: "Bottom right", id: "bottom-right" }
+        { placeholder: true }
     ];
 
+    const gridButtons = [];
+
+    const updateHighlight = (activeId) => {
+        gridButtons.forEach(b => {
+            const isAct = b.getAttribute("data-id") === activeId;
+            b.setAttribute("data-active", isAct ? "true" : "false");
+            b.style.background = isAct ? CPO_ACCENT : CPO_BUTTON_BG;
+        });
+    };
+
     options.forEach(opt => {
-        const item = document.createElement("div");
-        item.innerText = opt.label;
-        item.style.cssText = "padding: 6px 12px; color: #ccc; cursor: pointer; font-size: 12px; transition: 0.15s;";
-        item.onmouseenter = () => { item.style.background = CPO_ACCENT; item.style.color = "#fff"; };
-        item.onmouseleave = () => { item.style.background = "transparent"; item.style.color = "#ccc"; };
+        if (opt.placeholder) {
+            const placeholder = document.createElement("div");
+            placeholder.style.cssText = "visibility: hidden; aspect-ratio: 1; width: 100%;";
+            dropdown.appendChild(placeholder);
+            return;
+        }
+
+        const item = document.createElement("button");
+        item.title = opt.label;
+        item.setAttribute("data-id", opt.id);
+        item.style.cssText = "background: #2a2a2f; border: 1px solid #444; border-radius: 4px; cursor: pointer; transition: 0.15s; aspect-ratio: 1; width: 100%; box-sizing: border-box; padding: 0;";
+        gridButtons.push(item);
+
+        item.onmouseenter = () => {
+            const isActive = item.getAttribute("data-active") === "true";
+            if (!isActive) {
+                item.style.background = CPO_BUTTON_HOVER;
+            }
+        };
+        item.onmouseleave = () => {
+            const isActive = item.getAttribute("data-active") === "true";
+            if (isActive) {
+                item.style.background = CPO_ACCENT;
+            } else {
+                item.style.background = CPO_BUTTON_BG;
+            }
+        };
+
         item.onclick = (e) => {
             e.stopPropagation();
             alignBtn.querySelector("span").innerText = `Alignment: ${opt.label}`;
             dropdown.style.display = "none";
             
+            updateHighlight(opt.id);
+            
             const w = cropData.w;
             const h = cropData.h;
             switch(opt.id) {
-                case "top-left":
-                    cropData.x = 0;
-                    cropData.y = 0;
-                    break;
                 case "top":
                     cropData.x = (origW - w) / 2;
-                    cropData.y = 0;
-                    break;
-                case "top-right":
-                    cropData.x = origW - w;
                     cropData.y = 0;
                     break;
                 case "left":
@@ -196,19 +387,10 @@ export function openTrixCropEditor(node, cropWidget) {
                     cropData.x = origW - w;
                     cropData.y = (origH - h) / 2;
                     break;
-                case "bottom-left":
-                    cropData.x = 0;
-                    cropData.y = origH - h;
-                    break;
                 case "bottom":
                     cropData.x = (origW - w) / 2;
                     cropData.y = origH - h;
                     break;
-                case "bottom-right":
-                    cropData.x = origW - w;
-                    cropData.y = origH - h;
-                    break;
-                case "free":
                 default:
                     break;
             }
@@ -223,8 +405,8 @@ export function openTrixCropEditor(node, cropWidget) {
 
     alignBtn.onclick = (e) => {
         e.stopPropagation();
-        const show = dropdown.style.display === "flex";
-        dropdown.style.display = show ? "none" : "flex";
+        const show = dropdown.style.display === "grid";
+        dropdown.style.display = show ? "none" : "grid";
     };
 
     document.addEventListener("click", () => {
@@ -236,6 +418,10 @@ export function openTrixCropEditor(node, cropWidget) {
     const resetAlignmentToFree = () => {
         const span = alignBtn.querySelector("span");
         if (span) span.innerText = "Alignment: Free";
+        gridButtons.forEach(btn => {
+            btn.setAttribute("data-active", "false");
+            btn.style.background = CPO_BUTTON_BG;
+        });
     };
 
     const transformLabel = document.createElement("div");
@@ -275,6 +461,7 @@ export function openTrixCropEditor(node, cropWidget) {
     applyCpoButtonHover(btnRotateCCW);
 
     const transformImage = (op) => {
+        origImageData = null;
         const tempCanvas = document.createElement("canvas");
         const tempCtx = tempCanvas.getContext("2d");
         
@@ -333,17 +520,15 @@ export function openTrixCropEditor(node, cropWidget) {
                 cropData.h = oldW;
             }
             
-            cropData.x = Math.max(0, Math.min(origW, cropData.x));
-            cropData.y = Math.max(0, Math.min(origH, cropData.y));
-            cropData.w = Math.max(1, Math.min(origW - cropData.x, cropData.w));
-            cropData.h = Math.max(1, Math.min(origH - cropData.y, cropData.h));
+            cropData.w = Math.max(1, cropData.w);
+            cropData.h = Math.max(1, cropData.h);
             
             if (isLocked) {
                 lockRatio = cropData.w / cropData.h;
             }
             
             resetAlignmentToFree();
-            resizeCanvas();
+            resizeCanvas(true);
         };
         origImgObj.src = tempCanvas.toDataURL("image/png");
     };
@@ -391,6 +576,36 @@ export function openTrixCropEditor(node, cropWidget) {
 
     sizeRow.append(swapBtn, wCol, hCol);
 
+    wInput.oninput = () => {
+        let val = parseInt(wInput.value);
+        if (!isNaN(val) && val > 0) {
+            cropData.w = Math.max(1, val);
+            if (isLocked) {
+                cropData.h = Math.max(1, Math.round(cropData.w / lockRatio));
+            }
+            draw();
+            updateCalcInfo();
+        }
+    };
+    wInput.onblur = () => {
+        wInput.value = Math.round(cropData.w);
+    };
+
+    hInput.oninput = () => {
+        let val = parseInt(hInput.value);
+        if (!isNaN(val) && val > 0) {
+            cropData.h = Math.max(1, val);
+            if (isLocked) {
+                cropData.w = Math.max(1, Math.round(cropData.h * lockRatio));
+            }
+            draw();
+            updateCalcInfo();
+        }
+    };
+    hInput.onblur = () => {
+        hInput.value = Math.round(cropData.h);
+    };
+
     const lockBtn = document.createElement("button");
     lockBtn.innerHTML = `${svgUnlock} Unlock Aspect Ratio`;
     lockBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; cursor: pointer; font-size: 12px; transition: 0.2s;";
@@ -414,19 +629,41 @@ export function openTrixCropEditor(node, cropWidget) {
 
     const resetBtn = document.createElement("button");
     resetBtn.innerHTML = `${svgReset} Reset Crop`;
-    resetBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; flex: 1;";
+    resetBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px;";
     applyCpoButtonHover(resetBtn);
     resetBtn.onclick = () => {
         cropData = { x: 0, y: 0, w: origW, h: origH, color: cropData.color };
         resetAlignmentToFree();
-        resizeCanvas();
+        resizeCanvas(true);
     };
 
     const recenterBtn = document.createElement("button");
-    recenterBtn.innerHTML = `${svgRecenter} Recenter`;
-    recenterBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; flex: 1;";
+    recenterBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 5px 4px; cursor: pointer; font-size: 12px; transition: 0.2s; flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box;";
     applyCpoButtonHover(recenterBtn);
-    recenterBtn.onclick = () => resizeCanvas();
+    recenterBtn.onclick = () => resizeCanvas(true);
+
+    const svgIconSpan = document.createElement("span");
+    svgIconSpan.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4" y1="12" x2="20" y2="12"></line></svg>`;
+    svgIconSpan.style.cssText = "display: flex; align-items: center; justify-content: center; flex-shrink: 0;";
+
+    const textCol = document.createElement("div");
+    textCol.style.cssText = "display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1;";
+
+    const labelSpan = document.createElement("span");
+    labelSpan.innerText = "Recenter";
+    labelSpan.style.cssText = "font-weight: 500; font-size: 12px;";
+
+    const pctSpan = document.createElement("span");
+    pctSpan.innerText = "(100%)";
+    pctSpan.style.cssText = "font-size: 10px; color: #aaa; margin-top: 1px;";
+
+    textCol.append(labelSpan, pctSpan);
+    recenterBtn.append(svgIconSpan, textCol);
+
+    updateRecenterBtnText = () => {
+        const pct = Math.round((camera.zoom / baseFitScale) * 100);
+        pctSpan.innerText = `(${pct}%)`;
+    };
 
     actionRow.append(resetBtn, recenterBtn);
 
@@ -581,7 +818,7 @@ export function openTrixCropEditor(node, cropWidget) {
     };
 
     fSlider.oninput = (e) => syncFeather(e.target.value);
-    fInput.onchange = (e) => syncFeather(e.target.value);
+    fInput.onchange = (e) => { syncFeather(e.target.value); };
 
     featherRow.append(featherLabel, fSlider, fInput);
 
@@ -603,7 +840,7 @@ export function openTrixCropEditor(node, cropWidget) {
     snapLabel.style.cssText = "color: #aaa; font-size: 11px; margin-bottom: 5px; font-weight: bold; text-transform: uppercase;";
 
     const snapRow = document.createElement("div");
-    snapRow.style.cssText = "display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 20px;";
+    snapRow.style.cssText = "display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px;";
     const snaps = [1, 2, 4, 8, 32, 64];
     let currentSnap = 1;
     const snapBtns = [];
@@ -627,62 +864,113 @@ export function openTrixCropEditor(node, cropWidget) {
         snapRow.appendChild(btn);
     });
 
+    let useSmartSnapping = false;
+    const smartSnapRow = document.createElement("div");
+    smartSnapRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; background: #2a2a2a; padding: 8px 10px; margin-top: 5px; border-radius: 6px; border: 1px solid #444; box-shadow: inset 0 1px 2px rgba(0,0,0,0.4); margin-bottom: 20px;";
+    
+    const smartSnapLabel = document.createElement("span");
+    smartSnapLabel.innerText = "Smart Edge Snapping";
+    smartSnapLabel.style.cssText = "color: #fff; font-size: 12px; font-weight: bold; cursor: help;";
+    smartSnapLabel.title = "Snaps crop boundaries to high-contrast image contours and visual edges instead of just image borders.";
+    smartSnapRow.title = "Snaps crop boundaries to high-contrast image contours and visual edges instead of just image borders.";
+
+    const smartSwitchContainer = document.createElement("label");
+    smartSwitchContainer.style.cssText = "position: relative; display: inline-block; width: 34px; height: 18px; margin: 0; cursor: pointer;";
+
+    const smartCheckbox = document.createElement("input");
+    smartCheckbox.type = "checkbox";
+    smartCheckbox.style.cssText = "opacity: 0; width: 0; height: 0; position: absolute;";
+    smartCheckbox.checked = false;
+
+    const smartTrack = document.createElement("span");
+    smartTrack.style.cssText = "position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: #111; transition: .2s; border-radius: 18px; border: 1px solid #555; box-sizing: border-box;";
+
+    const smartCircle = document.createElement("span");
+    smartCircle.style.cssText = "position: absolute; content: ''; height: 12px; width: 12px; left: 2px; top: 2px; background: white; transition: .2s; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.5);";
+
+    smartTrack.appendChild(smartCircle);
+    smartSwitchContainer.append(smartCheckbox, smartTrack);
+    smartSnapRow.append(smartSnapLabel, smartSwitchContainer);
+
+    smartCheckbox.onchange = (e) => {
+        useSmartSnapping = e.target.checked;
+        smartTrack.style.backgroundColor = useSmartSnapping ? CPO_ACCENT : "#111";
+        smartCircle.style.transform = useSmartSnapping ? "translateX(16px)" : "translateX(0)";
+    };
+
+    const formatAspect = (w, h) => {
+        if (!w || !h) return "[?]";
+        w = Math.round(w);
+        h = Math.round(h);
+
+        // 1. Exact standard monitor resolutions mapping
+        if (w === 3440 && h === 1440) return "[21:9]";
+        if (w === 1440 && h === 3440) return "[9:21]";
+        if (w === 2560 && h === 1080) return "[21:9]";
+        if (w === 1080 && h === 2560) return "[9:21]";
+        if (w === 5120 && h === 2160) return "[21:9]";
+        if (w === 2160 && h === 5120) return "[9:21]";
+        if (w === 3840 && h === 1600) return "[21:9]";
+        if (w === 1600 && h === 3840) return "[9:21]";
+        
+        if (w === 5120 && h === 1440) return "[32:9]";
+        if (w === 1440 && h === 5120) return "[9:32]";
+        if (w === 3840 && h === 1080) return "[32:9]";
+        if (w === 1080 && h === 3840) return "[9:32]";
+
+        // 2. Exact mathematically simple standard ratios
+        const gcd = (a, b) => {
+            while (b) {
+                const t = b;
+                b = a % b;
+                a = t;
+            }
+            return a || 1;
+        };
+        const divisor = gcd(w, h);
+        const rw = w / divisor;
+        const rh = h / divisor;
+        const standards = ["1:1", "16:9", "9:16", "16:10", "10:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5"];
+        const ratioStr = `${rw}:${rh}`;
+        if (standards.includes(ratioStr)) {
+            return `[${ratioStr}]`;
+        }
+
+        // 3. Fallback for custom cropped aspect ratios
+        const cleanRatioNumber = (val) => {
+            const rounded = Number(val).toFixed(2);
+            return rounded.replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+        };
+        if (w === h) return "[1:1]";
+        if (w < h) {
+            return `[~1:${cleanRatioNumber(h / w)}]`;
+        }
+        return `[~${cleanRatioNumber(w / h)}:1]`;
+    };
+
     const calcInfo = document.createElement("div");
-    calcInfo.style.cssText = "background: #000; border: 1px solid #333; padding: 15px; border-radius: 6px; text-align: center; color: #aaa; font-family: monospace; font-size: 12px; margin-bottom: auto;";
+    calcInfo.style.cssText = "background: #1e1e22; border: 1px solid #3d3d42; padding: 12px; border-radius: 6px; text-align: center; color: #aaa; font-family: monospace; font-size: 12px; margin-bottom: auto;";
     
     const updateCalcInfo = () => {
         const cw = Math.round(cropData.w); const ch = Math.round(cropData.h);
-        calcInfo.innerHTML = `Original<br><span style="color:#fff">${origW} x ${origH}</span><br><br>Target<br><span style="color:rgb(150, 225, 255); font-size: 16px;">${cw} x ${ch}</span>`;
-        if (!isLocked) { wInput.value = cw; hInput.value = ch; }
+        const origAspect = formatAspect(origW, origH);
+        const targetAspect = formatAspect(cw, ch);
+        calcInfo.innerHTML = `Original<br><span style="color:#fff">${origW} x ${origH} &nbsp;${origAspect}</span><br><br>Target<br><span style="color:rgb(150, 225, 255); font-size: 14px;">${cw} x ${ch} &nbsp;${targetAspect}</span>`;
+        if (!isLocked) {
+            if (document.activeElement !== wInput) wInput.value = cw;
+            if (document.activeElement !== hInput) hInput.value = ch;
+        } else {
+            wInput.value = cw;
+            hInput.value = ch;
+        }
     };
 
     const actionsWrapper = document.createElement("div");
     actionsWrapper.style.cssText = "display: flex; flex-direction: column; gap: 8px; margin-top: 20px;";
 
-    const refreshBtn = document.createElement("button");
-    refreshBtn.innerText = "Refresh Image";
-    refreshBtn.style.cssText = "width: 100%; padding: 10px; background: #2a2a2f; color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 11px;";
-    applyCpoButtonHover(refreshBtn, () => false, CPO_BUTTON_BG, CPO_BUTTON_HOVER);
-    refreshBtn.onclick = () => {
-        const isWired = node.inputs && node.inputs.some(inp => inp.name === "in_image" && inp.link !== null);
-        if (isWired) {
-            if (cropWidget) cropWidget.value = JSON.stringify({ color: cropData.color });
-            node._currentLiveUrl = null; 
-            if (node.pullLivePreviewRef) node.pullLivePreviewRef();
-            setTimeout(() => {
-                origImgObj.onload = () => {
-                    origW = origImgObj.naturalWidth;
-                    origH = origImgObj.naturalHeight;
-                    cropData = { x: 0, y: 0, w: origW, h: origH, color: cropData.color };
-                    resizeCanvas();
-                };
-                origImgObj.src = node.imgTagRef.src;
-            }, 200);
-        } else {
-            let baseName = node._originalImageForCrop || (node.widgets.find(w => w.name === "image") ? node.widgets.find(w => w.name === "image").value : null);
-            if (!baseName) return;
-            if (cropWidget) cropWidget.value = JSON.stringify({ color: cropData.color });
-            
-            let filename = baseName; let subfolder = ""; if (baseName.includes("/")) { const parts = baseName.split("/"); filename = parts.pop(); subfolder = parts.join("/"); }
-            const url = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}&t=${Date.now()}`;
-            
-            origImgObj.onload = () => {
-                origW = origImgObj.naturalWidth;
-                origH = origImgObj.naturalHeight;
-                cropData = { x: 0, y: 0, w: origW, h: origH, color: cropData.color };
-                const imgWidget = node.widgets.find(w => w.name === "image");
-                if (imgWidget) {
-                    imgWidget.value = baseName;
-                    if (imgWidget.callback) imgWidget.callback(baseName);
-                }
-                resizeCanvas();
-            };
-            origImgObj.src = url;
-        }
-    };
 
-    const btnContainer = document.createElement("div");
-    btnContainer.style.cssText = "display: flex; gap: 10px;";
+
+
 
     const closeEditor = () => {
         abortCtrl.abort();
@@ -693,7 +981,7 @@ export function openTrixCropEditor(node, cropWidget) {
 
     const cancelBtn = document.createElement("button");
     cancelBtn.innerText = "Cancel";
-    cancelBtn.style.cssText = "flex: 1; padding: 10px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s;";
+    cancelBtn.style.cssText = "width: 100%; padding: 10px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 11px;";
     applyCpoButtonHover(cancelBtn, () => false, "#333", "#444");
     cancelBtn.onclick = closeEditor;
 
@@ -746,122 +1034,277 @@ export function openTrixCropEditor(node, cropWidget) {
             }, 60000); 
         }, "image/png");
     };
-
     const saveBtn = document.createElement("button");
-    saveBtn.innerText = "Save";
-    saveBtn.style.cssText = "flex: 1; padding: 10px; background: #33789a; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;";
+    saveBtn.innerText = "Save to Node";
+    saveBtn.style.cssText = "flex: 1; padding: 10px; background: #33789a; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 11px;";
     applyCpoPrimaryHover(saveBtn);
-    
-    saveBtn.onclick = async () => {
+    saveBtn.onclick = () => {
         saveBtn.disabled = true;
         saveBtn.innerText = "Saving...";
         
-        node.properties = node.properties || {};
-        node.properties.trix_crop_color = cropData.color;
-        
-        cropData.x = Math.round(cropData.x); cropData.y = Math.round(cropData.y);
-        cropData.w = Math.round(cropData.w); cropData.h = Math.round(cropData.h);
-        
-        const tCanvas = document.createElement("canvas");
-        tCanvas.width = cropData.w; tCanvas.height = cropData.h;
-        const tCtx = tCanvas.getContext("2d");
-        tCtx.fillStyle = cropData.color;
-        tCtx.fillRect(0, 0, cropData.w, cropData.h);
-        tCtx.drawImage(origImgObj, -cropData.x, -cropData.y);
+        setTimeout(async () => {
+            const filename = trixCropFilename(node.id);
+            node.properties = node.properties || {};
+            node.properties.trix_crop_color = cropData.color;
+            
+            cropData.x = Math.round(cropData.x); cropData.y = Math.round(cropData.y);
+            cropData.w = Math.round(cropData.w); cropData.h = Math.round(cropData.h);
+            
+            const tCanvas = document.createElement("canvas");
+            tCanvas.width = cropData.w; tCanvas.height = cropData.h;
+            const tCtx = tCanvas.getContext("2d");
+            tCtx.fillStyle = cropData.color;
+            tCtx.fillRect(0, 0, cropData.w, cropData.h);
+            tCtx.drawImage(origImgObj, -cropData.x, -cropData.y);
 
-        const widgets = node.widgets ? node.widgets.reduce((acc, w) => ({...acc, [w.name]: w}), {}) : {};
-        if (useOutpaint) {
-            const mCvs = document.createElement("canvas");
-            mCvs.width = cropData.w; mCvs.height = cropData.h;
-            const mCtx = mCvs.getContext("2d");
-            
-            mCtx.fillStyle = node.maskColor || "#ff0000";
-            mCtx.fillRect(0, 0, cropData.w, cropData.h);
-            
-            let padLeft = -cropData.x;
-            let padTop = -cropData.y;
-            let padRight = cropData.w - origW + cropData.x;
-            let padBottom = cropData.h - origH + cropData.y;
-            
-            let grow = feathering * 2;
-            
-            let blackX1 = padLeft + (padLeft > 0 ? grow : 0);
-            let blackY1 = padTop + (padTop > 0 ? grow : 0);
-            let blackX2 = padLeft + origW - (padRight > 0 ? grow : 0);
-            let blackY2 = padTop + origH - (padBottom > 0 ? grow : 0);
-            
-            blackX1 = Math.min(blackX1, padLeft + origW);
-            blackY1 = Math.min(blackY1, padTop + origH);
-            blackX2 = Math.max(blackX2, padLeft);
-            blackY2 = Math.max(blackY2, padTop);
-            
-            let clrW = blackX2 - blackX1;
-            let clrH = blackY2 - blackY1;
-            
-            mCtx.globalCompositeOperation = "destination-out";
-            if (feathering > 0) mCtx.filter = `blur(${feathering}px)`;
-            mCtx.fillStyle = "black";
-            if (clrW > 0 && clrH > 0) mCtx.fillRect(blackX1, blackY1, clrW, clrH);
-            
-            mCtx.filter = "none";
-            mCtx.globalCompositeOperation = "source-over";
-
-            if (widgets.mask_data) widgets.mask_data.value = mCvs.toDataURL("image/png");
-            if (widgets.mode) widgets.mode.value = "Mask";
-        } else {
-            if (widgets.mask_data) widgets.mask_data.value = "";
-        }
-
-        const isWired = node.inputs && node.inputs.some(inp => inp.name === "in_image" && inp.link !== null);
-
-        if (!isWired && widgets.image) {
-            if (widgets.image.value && !widgets.image.value.includes("aio_crop_")) {
-                node._originalImageForCrop = widgets.image.value;
-            }
-        }
-
-        if (isWired) {
-            if (cropWidget) cropWidget.value = JSON.stringify(cropData);
-            node.imgTagRef.src = tCanvas.toDataURL("image/png");
-            setTimeout(() => { 
-                if (node.updateUIRef) node.updateUIRef();
-            }, 50); 
-            closeEditor();
-        } else {
-            try {
-                const blob = await new Promise(resolve => tCanvas.toBlob(resolve, 'image/png'));
-                const filename = trixCropFilename(node.id);
-                const file = new File([blob], filename, { type: "image/png" });
+            const widgets = node.widgets ? node.widgets.reduce((acc, w) => ({...acc, [w.name]: w}), {}) : {};
+            if (useOutpaint) {
+                const mCvs = document.createElement("canvas");
+                mCvs.width = cropData.w; mCvs.height = cropData.h;
+                const mCtx = mCvs.getContext("2d");
                 
-                const body = new FormData();
-                body.append("image", file, filename);
-                body.append("type", "input");
-                body.append("subfolder", TRIX_AIO_SUBFOLDER);
-                body.append("overwrite", "true");
+                mCtx.fillStyle = node.maskColor || "#ff0000";
+                mCtx.fillRect(0, 0, cropData.w, cropData.h);
                 
-                const uploadResp = await fetch("/upload/image", { method: "POST", body: body });
-                if (uploadResp.status === 200) {
-                    const data = await uploadResp.json();
-                    const fullPath = data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
-                    
-                    if (widgets.image) {
-                        widgets.image.value = fullPath;
-                        if (widgets.image.callback) widgets.image.callback(fullPath);
-                    }
-                    if (cropWidget) {
-                        cropWidget.value = JSON.stringify({ color: cropData.color });
+                let padLeft = -cropData.x;
+                let padTop = -cropData.y;
+                let padRight = cropData.w - origW + cropData.x;
+                let padBottom = cropData.h - origH + cropData.y;
+                
+                let grow = feathering * 2;
+                
+                let blackX1 = padLeft + (padLeft > 0 ? grow : 0);
+                let blackY1 = padTop + (padTop > 0 ? grow : 0);
+                let blackX2 = padLeft + origW - (padRight > 0 ? grow : 0);
+                let blackY2 = padTop + origH - (padBottom > 0 ? grow : 0);
+                
+                blackX1 = Math.min(blackX1, padLeft + origW);
+                blackY1 = Math.min(blackY1, padTop + origH);
+                blackX2 = Math.max(blackX2, padLeft);
+                blackY2 = Math.max(blackY2, padTop);
+                
+                let clrW = blackX2 - blackX1;
+                let clrH = blackY2 - blackY1;
+                
+                mCtx.globalCompositeOperation = "destination-out";
+                if (feathering > 0) mCtx.filter = `blur(${feathering}px)`;
+                mCtx.fillStyle = "black";
+                if (clrW > 0 && clrH > 0) mCtx.fillRect(blackX1, blackY1, clrW, clrH);
+                
+                mCtx.filter = "none";
+                mCtx.globalCompositeOperation = "source-over";
+
+                // Extract existing mask and decontaminated image sources
+                let originalMaskData = widgets.mask_data?.value || "";
+                let originalMaskSrc = "";
+                let originalDecontSrc = null;
+                if (originalMaskData) {
+                    if (originalMaskData.startsWith("{")) {
+                        try {
+                            const parsed = JSON.parse(originalMaskData);
+                            originalMaskSrc = parsed.mask || "";
+                            originalDecontSrc = parsed.decont_image || null;
+                        } catch(e) {
+                            originalMaskSrc = originalMaskData;
+                        }
+                    } else {
+                        originalMaskSrc = originalMaskData;
                     }
                 }
-            } catch(e) {
-                console.error("Save to Clipspace failed", e);
+                
+                let maskSrcToAdapt = null;
+                if (node._openedFromMaskEditor && node._maskEditorBeforeOutpaint) {
+                    maskSrcToAdapt = node._maskEditorBeforeOutpaint;
+                } else if (originalMaskSrc) {
+                    maskSrcToAdapt = originalMaskSrc;
+                }
+
+                let finalMaskB64 = null;
+                if (maskSrcToAdapt) {
+                    const oldMaskImg = new Image();
+                    await new Promise((resolve) => {
+                        oldMaskImg.onload = resolve;
+                        oldMaskImg.onerror = resolve;
+                        oldMaskImg.src = maskSrcToAdapt;
+                    });
+                    let maskPadLeft = oldCropX - cropData.x;
+                    let maskPadTop = oldCropY - cropData.y;
+                    mCtx.drawImage(oldMaskImg, maskPadLeft, maskPadTop);
+                }
+                finalMaskB64 = mCvs.toDataURL("image/png");
+
+                let finalDecontVal = null;
+                if (originalDecontSrc) {
+                    finalDecontVal = `${TRIX_AIO_SUBFOLDER}/${filename}`;
+                }
+
+                if (finalMaskB64) {
+                    if (finalDecontVal) {
+                        widgets.mask_data.value = JSON.stringify({
+                            mask: finalMaskB64,
+                            decont_image: finalDecontVal
+                        });
+                    } else {
+                        widgets.mask_data.value = finalMaskB64;
+                    }
+                    if (widgets.mode) widgets.mode.value = "Mask";
+                }
+            } else {
+                // Adapt existing mask to the new crop/pad size when not outpainting
+                let originalMaskData = widgets.mask_data?.value || "";
+                let originalMaskSrc = "";
+                let originalDecontSrc = null;
+                if (originalMaskData) {
+                    if (originalMaskData.startsWith("{")) {
+                        try {
+                            const parsed = JSON.parse(originalMaskData);
+                            originalMaskSrc = parsed.mask || "";
+                            originalDecontSrc = parsed.decont_image || null;
+                        } catch(e) {
+                            originalMaskSrc = originalMaskData;
+                        }
+                    } else {
+                        originalMaskSrc = originalMaskData;
+                    }
+                }
+                
+                let maskSrcToAdapt = null;
+                if (node._openedFromMaskEditor && node._maskEditorBeforeOutpaint) {
+                    maskSrcToAdapt = node._maskEditorBeforeOutpaint;
+                } else if (originalMaskSrc) {
+                    maskSrcToAdapt = originalMaskSrc;
+                }
+
+                let padLeft = oldCropX - cropData.x;
+                let padTop = oldCropY - cropData.y;
+                let finalMaskB64 = null;
+
+                if (maskSrcToAdapt) {
+                    const mCvs = document.createElement("canvas");
+                    mCvs.width = cropData.w; mCvs.height = cropData.h;
+                    const mCtx = mCvs.getContext("2d");
+                    
+                    const oldMaskImg = new Image();
+                    await new Promise((resolve) => {
+                        oldMaskImg.onload = resolve;
+                        oldMaskImg.onerror = resolve;
+                        oldMaskImg.src = maskSrcToAdapt;
+                    });
+                    mCtx.drawImage(oldMaskImg, padLeft, padTop);
+                    finalMaskB64 = mCvs.toDataURL("image/png");
+                }
+
+                let finalDecontVal = null;
+                if (originalDecontSrc) {
+                    finalDecontVal = `${TRIX_AIO_SUBFOLDER}/${filename}`;
+                }
+
+                if (finalMaskB64) {
+                    if (finalDecontVal) {
+                        widgets.mask_data.value = JSON.stringify({
+                            mask: finalMaskB64,
+                            decont_image: finalDecontVal
+                        });
+                    } else {
+                        widgets.mask_data.value = finalMaskB64;
+                    }
+                } else {
+                    if (widgets.mask_data) widgets.mask_data.value = "";
+                }
             }
-            closeEditor();
-        }
+
+            node._clearHistoryOnLoad = true;
+
+            const openedFromMask = node._openedFromMaskEditor;
+            node._openedFromMaskEditor = false;
+
+            const isWired = node.inputs && node.inputs.some(inp => inp.name === "in_image" && inp.link !== null);
+
+            if (!isWired && widgets.image) {
+                if (widgets.image.value && !widgets.image.value.includes("aio_crop_") && !widgets.image.value.includes("trix_edited_")) {
+                    node._originalImageForCrop = widgets.image.value;
+                }
+            }
+
+            tCanvas.toBlob(async (blob) => {
+                if (!blob) {
+                    console.error("Failed to create blob for saving");
+                    saveBtn.disabled = false;
+                    saveBtn.innerText = "Save to Node";
+                    return;
+                }
+                
+                try {
+                    const file = new File([blob], filename, { type: "image/png" });
+                    const body = new FormData();
+                    body.append("image", file, filename);
+                    body.append("type", "input");
+                    body.append("subfolder", TRIX_AIO_SUBFOLDER);
+                    body.append("overwrite", "true");
+                    
+                    const uploadResp = await fetch("/upload/image", { method: "POST", body: body });
+                    if (uploadResp.status === 200) {
+                        const uploadData = await uploadResp.json();
+                        const fullPath = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
+                        
+                        node._trix_image_version = (node._trix_image_version || 0) + 1;
+                        const imgWidget = node.widgets.find(w => w.name === "image");
+                        if (imgWidget) {
+                            node._isChangingImage = true;
+                            imgWidget.value = fullPath;
+                            if (imgWidget.callback) imgWidget.callback(fullPath);
+                        }
+                        
+                        if (cropWidget) {
+                            if (isWired) {
+                                cropWidget.value = JSON.stringify(cropData);
+                            } else {
+                                let originalParsed = {};
+                                try {
+                                    if (cropWidget.value) {
+                                        originalParsed = JSON.parse(cropWidget.value);
+                                    }
+                                } catch(e) {}
+                                cropWidget.value = JSON.stringify({
+                                    ...originalParsed,
+                                    color: cropData.color
+                                });
+                            }
+                        }
+                        
+                        if (node.updateUIRef) node.updateUIRef();
+                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                        closeEditor();
+
+                        // Notify downstream nodes to pull the updated preview/image in real-time
+                        setTimeout(() => {
+                            if (app.graph) {
+                                app.graph._nodes.forEach(n => {
+                                    if (typeof n.pullLivePreviewRef === "function") {
+                                        n.pullLivePreviewRef();
+                                    }
+                                });
+                            }
+                        }, 150);
+                    } else {
+                        throw new Error(`Upload failed: ${uploadResp.status}`);
+                    }
+                } catch (e) {
+                    console.error("Save to Node upload failed", e);
+                    alert("Failed to save image to node: " + e);
+                    saveBtn.disabled = false;
+                    saveBtn.innerText = "Save to Node";
+                }
+            }, "image/png");
+        }, 50);
     };
 
-    btnContainer.append(cancelBtn, saveDiskBtn, saveBtn);
-    actionsWrapper.append(refreshBtn, btnContainer);
-    sidebar.append(title, presetRow, alignContainer, sizeContainer, snapSeparator, snapLabel, snapRow, transformLabel, transformRow, calcInfo, actionsWrapper);
+    const saveButtonsRow = document.createElement("div");
+    saveButtonsRow.style.cssText = "display: flex; gap: 8px; width: 100%;";
+    saveButtonsRow.append(saveDiskBtn, saveBtn);
+
+    actionsWrapper.append(cancelBtn, saveButtonsRow);
+    sidebar.append(title, presetRow, alignContainer, sizeContainer, snapSeparator, snapLabel, snapRow, smartSnapRow, transformLabel, transformRow, calcInfo, actionsWrapper);
 
     const workspace = document.createElement("div");
     workspace.style.cssText = "flex: 1; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center;";
@@ -872,21 +1315,43 @@ export function openTrixCropEditor(node, cropWidget) {
     overlay.append(sidebar, workspace);
     document.body.appendChild(overlay);
 
-    let camera = { x: 0, y: 0, zoom: 1 };
-    let isDragging = false; let dragHandle = null; 
-    let startMx = 0, startMy = 0; let startCrop = null; let isPanning = false;
 
-    const resizeCanvas = () => {
-        canvas.width = workspace.clientWidth; canvas.height = workspace.clientHeight;
+
+    const getFitScale = () => {
         const fitZoomW = (canvas.width * 0.7) / cropData.w;
         const fitZoomH = (canvas.height * 0.7) / cropData.h;
-        camera.zoom = Math.min(fitZoomW, fitZoomH);
-        camera.x = canvas.width / 2 - (cropData.x + cropData.w / 2) * camera.zoom;
-        camera.y = canvas.height / 2 - (cropData.y + cropData.h / 2) * camera.zoom;
+        return Math.min(fitZoomW, fitZoomH);
+    };
+
+    const resizeCanvas = (forceCenter = false) => {
+        canvas.width = workspace.clientWidth; canvas.height = workspace.clientHeight;
+        
+        if (!origImageData) initOrigImageData();
+        
+        if (isFirstLaunch || forceCenter) {
+            const fitScale = getFitScale();
+            camera.zoom = fitScale;
+            baseFitScale = fitScale;
+            camera.x = canvas.width / 2 - (cropData.x + cropData.w / 2) * camera.zoom;
+            camera.y = canvas.height / 2 - (cropData.y + cropData.h / 2) * camera.zoom;
+            isFirstLaunch = false;
+        } else {
+            if (lastWorkspaceW && lastWorkspaceH) {
+                const dw = canvas.width - lastWorkspaceW;
+                const dh = canvas.height - lastWorkspaceH;
+                camera.x += dw / 2;
+                camera.y += dh / 2;
+            }
+        }
+        
+        lastWorkspaceW = canvas.width;
+        lastWorkspaceH = canvas.height;
+        
         draw();
     };
 
     const draw = () => {
+        if (typeof updateRecenterBtnText === "function") updateRecenterBtnText();
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
         const imgScreenX = camera.x; const imgScreenY = camera.y;
@@ -1100,10 +1565,44 @@ export function openTrixCropEditor(node, cropWidget) {
                 cropData.y = Math.round(cropData.y / currentSnap) * currentSnap;
             }
         } else {
-            if (dragHandle.includes("L") && Math.abs(startCrop.x + dx) < snapThresh) dx = -startCrop.x;
-            if (dragHandle.includes("R") && Math.abs(startCrop.x + startCrop.w + dx - origW) < snapThresh) dx = origW - (startCrop.x + startCrop.w);
-            if (dragHandle.includes("T") && Math.abs(startCrop.y + dy) < snapThresh) dy = -startCrop.y;
-            if (dragHandle.includes("B") && Math.abs(startCrop.y + startCrop.h + dy - origH) < snapThresh) dy = origH - (startCrop.y + startCrop.h);
+            if (useSmartSnapping && origImageData) {
+                const searchRadius = Math.max(2, 15 / camera.zoom);
+                if (dragHandle.includes("L") || dragHandle.includes("R")) {
+                    const edgeX = dragHandle.includes("L") ? (startCrop.x + dx) : (startCrop.x + startCrop.w + dx);
+                    let yStart = startCrop.y;
+                    let yEnd = startCrop.y + startCrop.h;
+                    if (dragHandle.includes("T")) yStart += dy;
+                    if (dragHandle.includes("B")) yEnd += dy;
+                    
+                    const snappedX = findSmartSnapX(edgeX, yStart, yEnd, origImageData, searchRadius);
+                    if (snappedX !== edgeX) {
+                        dx = snappedX - (dragHandle.includes("L") ? startCrop.x : (startCrop.x + startCrop.w));
+                    } else {
+                        if (dragHandle.includes("L") && Math.abs(startCrop.x + dx) < snapThresh) dx = -startCrop.x;
+                        if (dragHandle.includes("R") && Math.abs(startCrop.x + startCrop.w + dx - origW) < snapThresh) dx = origW - (startCrop.x + startCrop.w);
+                    }
+                }
+                if (dragHandle.includes("T") || dragHandle.includes("B")) {
+                    const edgeY = dragHandle.includes("T") ? (startCrop.y + dy) : (startCrop.y + startCrop.h + dy);
+                    let xStart = startCrop.x;
+                    let xEnd = startCrop.x + startCrop.w;
+                    if (dragHandle.includes("L")) xStart += dx;
+                    if (dragHandle.includes("R")) xEnd += dx;
+                    
+                    const snappedY = findSmartSnapY(edgeY, xStart, xEnd, origImageData, searchRadius);
+                    if (snappedY !== edgeY) {
+                        dy = snappedY - (dragHandle.includes("T") ? startCrop.y : (startCrop.y + startCrop.h));
+                    } else {
+                        if (dragHandle.includes("T") && Math.abs(startCrop.y + dy) < snapThresh) dy = -startCrop.y;
+                        if (dragHandle.includes("B") && Math.abs(startCrop.y + startCrop.h + dy - origH) < snapThresh) dy = origH - (startCrop.y + startCrop.h);
+                    }
+                }
+            } else {
+                if (dragHandle.includes("L") && Math.abs(startCrop.x + dx) < snapThresh) dx = -startCrop.x;
+                if (dragHandle.includes("R") && Math.abs(startCrop.x + startCrop.w + dx - origW) < snapThresh) dx = origW - (startCrop.x + startCrop.w);
+                if (dragHandle.includes("T") && Math.abs(startCrop.y + dy) < snapThresh) dy = -startCrop.y;
+                if (dragHandle.includes("B") && Math.abs(startCrop.y + startCrop.h + dy - origH) < snapThresh) dy = origH - (startCrop.y + startCrop.h);
+            }
 
             let altActive = e.altKey;
             let shiftActive = e.shiftKey;

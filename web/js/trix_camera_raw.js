@@ -149,6 +149,10 @@ export function openTrixCameraRawEditor(node) {
     origImgObj.crossOrigin = "Anonymous";
     origImgObj.src = node.imgTagRef.src;
 
+    const TRIX_AIO_SUBFOLDER = "aio_input";
+    const trixCropSafeId = (value) => String(value ?? "node").replace(/[^a-zA-Z0-9_-]+/g, "_") || "node";
+    const trixCropFilename = (nodeId) => `trix_edited_${trixCropSafeId(nodeId)}.png`;
+
     const getW = (name) => node.widgets ? node.widgets.find(w => w && w.name === name) : null;
     const getV = (name) => { const w = getW(name); return w ? parseInt(w.value) || 0 : 0; };
 
@@ -195,6 +199,10 @@ export function openTrixCameraRawEditor(node) {
         background-color: #1a1a1a;
         z-index: 10000; display: flex; flex-direction: row; font-family: sans-serif; user-select: none;
     `;
+    overlay.oncontextmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
 
     const workspace = document.createElement("div");
     workspace.style.cssText = `
@@ -256,6 +264,9 @@ export function openTrixCameraRawEditor(node) {
     
     let camera = { x: 0, y: 0, zoom: 1 };
     let isPanning = false; let startMx = 0; let startMy = 0;
+    let isFirstLaunch = true;
+    let lastWorkspaceW = workspace.clientWidth || 0;
+    let lastWorkspaceH = workspace.clientHeight || 0;
     
     let hslFingerActive = false;
     let hslDragging = false;
@@ -266,9 +277,28 @@ export function openTrixCameraRawEditor(node) {
     let baseImgData = null;
     let pW = 0, pH = 0;
 
+    const getFitScale = () => {
+        if (!pW || !pH) return 1.0;
+        const fitZoomW = (workspace.clientWidth * 0.9) / pW;
+        const fitZoomH = (workspace.clientHeight * 0.9) / pH;
+        return Math.min(fitZoomW, fitZoomH, 1.0);
+    };
+
+    const updateRecenterBtnText = () => {
+        const span = recenterBtn.querySelector("span");
+        if (span) {
+            const fitScale = getFitScale();
+            const pct = Math.round((camera.zoom / fitScale) * 100);
+            span.innerText = `Recenter (${pct}%)`;
+        }
+    };
+
     const drawWorkspace = () => {
         workspace.style.backgroundPosition = `${camera.x}px ${camera.y}px, ${camera.x + 8}px ${camera.y + 8}px`;
         canvas.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})`;
+        if (typeof updateRecenterBtnText === "function") {
+            updateRecenterBtnText();
+        }
     };
 
     const topActions = document.createElement("div");
@@ -319,16 +349,14 @@ export function openTrixCameraRawEditor(node) {
     recenterBtn.onmouseenter = () => { if (!recenterBtn.dataset.active) { recenterBtn.style.background = "#333a45"; recenterBtn.style.color = "#fff"; } };
     recenterBtn.onmouseleave = () => { if (!recenterBtn.dataset.active) { recenterBtn.style.background = "#24242a"; recenterBtn.style.color = "#cfcfcf"; } };
 
-    const centerImage = () => {
+    const centerImage = (forceFit = false) => {
         if (!pW || !pH) return;
-        const fitZoomW = (workspace.clientWidth * 0.8) / pW;
-        const fitZoomH = (workspace.clientHeight * 0.8) / pH;
-        camera.zoom = Math.min(fitZoomW, fitZoomH);
+        camera.zoom = getFitScale();
         camera.x = workspace.clientWidth / 2 - (pW / 2) * camera.zoom;
         camera.y = workspace.clientHeight / 2 - (pH / 2) * camera.zoom;
         drawWorkspace();
     };
-    recenterBtn.onclick = centerImage;
+    recenterBtn.onclick = () => centerImage(true);
 
     const undoBtn = document.createElement("button");
     undoBtn.innerHTML = svgUndoCR;
@@ -960,287 +988,23 @@ export function openTrixCameraRawEditor(node) {
         scheduleRender();
     };
 
-    const btnContainer = document.createElement("div");
-    btnContainer.style.cssText = "display: flex; gap: 8px; margin-top: 20px; padding: 12px 0 4px 0;";
+    const actionsWrapper = document.createElement("div");
+    actionsWrapper.style.cssText = "display: flex; flex-direction: column; gap: 8px; margin-top: 20px; padding: 12px 0 4px 0; width: 100%;";
 
     const cancelBtn = document.createElement("button");
     cancelBtn.innerText = "Cancel";
-    cancelBtn.style.cssText = "flex: 1; padding: 10px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s;";
+    cancelBtn.style.cssText = "width: 100%; padding: 10px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; font-weight: bold;";
     cancelBtn.onmouseenter = () => { cancelBtn.style.background = "#444"; };
     cancelBtn.onmouseleave = () => { cancelBtn.style.background = "#333"; };
     
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display: flex; gap: 8px; width: 100%;";
+
     const saveDiskBtn = document.createElement("button");
     saveDiskBtn.innerText = "Save to Disk";
-    saveDiskBtn.style.cssText = "flex: 1; padding: 10px; background: #2a2a2f; color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 11px;";
+    saveDiskBtn.style.cssText = "flex: 1; padding: 10px; background: #2a2a2f; color: #fff; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 11px; font-weight: bold;";
     saveDiskBtn.onmouseenter = () => { saveDiskBtn.style.background = "#333a45"; };
     saveDiskBtn.onmouseleave = () => { saveDiskBtn.style.background = "#2a2a2f"; };
-
-    const processPixels = (srcData, targetData, w, h, crState, hState, cState) => {
-        const exp = crState.cr_exp / 100.0;
-        const cont = crState.cr_cont / 100.0;
-        const high = crState.cr_high / 100.0;
-        const shad = crState.cr_shad / 100.0;
-        const white = crState.cr_white / 100.0;
-        const black = crState.cr_black / 100.0;
-        const temp = crState.cr_temp / 200.0;
-        const tint = crState.cr_tint / 400.0;
-        const colorful = crState.cr_colorfulness / 100.0;
-        const sat = crState.cr_sat / 100.0;
-        const dehz = crState.cr_dehz;
-        const grain = crState.cr_grain / 200.0;
-        const vig = crState.cr_vignette / 50.0;
-        const hasHsl = hState.colorize || ['master', 'reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'].some(ch => {
-            const conf = hState[ch] || {};
-            return conf.h !== 0 || conf.s !== 0 || conf.l !== 0;
-        });
-        const curveState = ensureCurveState(cState);
-        const hasCurve = curveHasAdjustments(curveState);
-        const curveRgbLut = hasCurve ? buildCurveLut(curveState.rgb) : null;
-        const curveRLut = hasCurve ? buildCurveLut(curveState.r) : null;
-        const curveGLut = hasCurve ? buildCurveLut(curveState.g) : null;
-        const curveBLut = hasCurve ? buildCurveLut(curveState.b) : null;
-
-        const getHueWeight = (hh, center, width) => {
-            let diff = Math.abs(hh - center);
-            if (diff > 180) diff = 360 - diff;
-            const half = Math.max(5, width / 2);
-            const falloff = Math.max(12, half * 0.65);
-            if (diff <= half) return 1;
-            if (diff <= half + falloff) {
-                const t = (diff - half) / falloff;
-                return 0.5 * (1 + Math.cos(Math.PI * t));
-            }
-            return 0;
-        };
-
-        for (let i = 0; i < srcData.length; i += 4) {
-            let r = srcData[i] / 255.0;
-            let g = srcData[i+1] / 255.0;
-            let b = srcData[i+2] / 255.0;
-
-            if (temp !== 0 || tint !== 0) {
-                r += temp + (tint * 2.0);
-                g -= tint * 2.0;
-                b -= temp - (tint * 2.0);
-            }
-
-            let luma = r * 0.299 + g * 0.587 + b * 0.114;
-
-            if (exp !== 0) {
-                const mult = Math.pow(2.0, exp * 2.0);
-                r *= mult; g *= mult; b *= mult;
-                luma *= mult;
-            }
-
-            if (shad !== 0) {
-                let mask = (0.72 - luma) / 0.72;
-                if (mask < 0) mask = 0; else if (mask > 1) mask = 1;
-                mask = mask * mask * (3 - 2 * mask);
-                if (shad >= 0) {
-                    const lift = mask * shad * 0.85;
-                    r += (1.0 - r) * lift;
-                    g += (1.0 - g) * lift;
-                    b += (1.0 - b) * lift;
-                } else {
-                    const darken = mask * (-shad) * 0.8;
-                    r *= 1.0 - darken;
-                    g *= 1.0 - darken;
-                    b *= 1.0 - darken;
-                }
-            }
-
-            if (high !== 0) {
-                let mask = (luma - 0.5) / 0.5;
-                if (mask < 0) mask = 0; else if (mask > 1) mask = 1;
-                const adj = mask * high * 0.5;
-                r += r * adj; g += g * adj; b += b * adj;
-            }
-
-            if (white !== 0) {
-                const adj = white * 0.5;
-                r += r * r * adj; g += g * g * adj; b += b * b * adj;
-            }
-
-            if (black !== 0) {
-                const adj = black * 0.5;
-                r -= (1.0 - r) * (1.0 - r) * adj;
-                g -= (1.0 - g) * (1.0 - g) * adj;
-                b -= (1.0 - b) * (1.0 - b) * adj;
-            }
-
-            if (cont !== 0) {
-                const f = 1.0 + cont;
-                r = (r - 0.5) * f + 0.5;
-                g = (g - 0.5) * f + 0.5;
-                b = (b - 0.5) * f + 0.5;
-            }
-
-            if (sat !== 0) {
-                luma = r * 0.299 + g * 0.587 + b * 0.114;
-                r += (r - luma) * sat;
-                g += (g - luma) * sat;
-                b += (b - luma) * sat;
-            }
-
-            if (colorful !== 0) {
-                luma = r * 0.299 + g * 0.587 + b * 0.114;
-                const maxC = Math.max(r, g, b);
-                const minC = Math.min(r, g, b);
-                const sat_mask = 1.0 - (maxC - minC);
-                const adj = colorful * sat_mask;
-                r += (r - luma) * adj;
-                g += (g - luma) * adj;
-                b += (b - luma) * adj;
-            }
-
-            if (dehz !== 0) {
-                const dehzN = dehz / 150.0;
-                const maxC = Math.max(r, g, b);
-                const minC = Math.min(r, g, b);
-                const haze = Math.max(0, Math.min(1, 1 - (maxC - minC) * 2));
-                const mid = Math.max(0, Math.min(1, 1 - Math.abs(luma - 0.5) * 2));
-                const weight = Math.max(0, Math.min(1, 0.35 + 0.65 * haze * mid));
-
-                if (dehzN > 0) {
-                    const contrast = 1 + dehzN * 0.9 * weight;
-                    r = (r - 0.5) * contrast + 0.5;
-                    g = (g - 0.5) * contrast + 0.5;
-                    b = (b - 0.5) * contrast + 0.5;
-                    const neutral = (r + g + b) / 3;
-                    const satBoost = dehzN * 0.18 * weight;
-                    r += (r - neutral) * satBoost;
-                    g += (g - neutral) * satBoost;
-                    b += (b - neutral) * satBoost;
-                } else {
-                    const soften = (-dehzN) * 0.45 * weight;
-                    r = (r - 0.5) * (1 - soften) + 0.5;
-                    g = (g - 0.5) * (1 - soften) + 0.5;
-                    b = (b - 0.5) * (1 - soften) + 0.5;
-                }
-            }
-
-            if (vig !== 0) {
-                const px = (i / 4) % w;
-                const py = Math.floor((i / 4) / w);
-                const cx = w / 2;
-                const cy = h / 2;
-                const radius = Math.sqrt(Math.pow(px - cx, 2) + Math.pow(py - cy, 2));
-                const max_rad = Math.sqrt(cx*cx + cy*cy);
-                let v_mask = 1.0 - ((radius / max_rad) - 0.3) * vig;
-                if (v_mask < 0) v_mask = 0; else if (v_mask > 1) v_mask = 1;
-                r *= v_mask; g *= v_mask; b *= v_mask;
-            }
-
-            if (grain !== 0) {
-                const noise = (Math.random() - 0.5) * 2.0 * grain;
-                r += noise; g += noise; b += noise;
-            }
-
-            r = Math.max(0, Math.min(1, r));
-            g = Math.max(0, Math.min(1, g));
-            b = Math.max(0, Math.min(1, b));
-
-            if (hasHsl) {
-                let [hh, ss, ll] = rgbToHsl(r * 255, g * 255, b * 255);
-                
-                if (hState.colorize) {
-                    hh = hState.master.h;
-                    if (hh < 0) hh += 360;
-                    ss = Math.max(0, Math.min(1, 0.5 + (hState.master.s / 100)));
-                    ll = applyLightnessLikePhotoshop(ll, hState.master.l / 100);
-                } else {
-                    let totalHShift = hState.master.h;
-                    let totalSMult = Math.exp((hState.master.s / 100) * HSL_SATURATION_LOG);
-                    let totalLShift = hState.master.l / 100;
-
-                    const channels = ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'];
-                    for (let ch of channels) {
-                        let conf = hState[ch] || { h: 0, s: 0, l: 0, center: 0, width: 60 };
-                        if (conf.h === 0 && conf.s === 0 && conf.l === 0) continue;
-                        const center = Number.isFinite(conf.center) ? conf.center : 0;
-                        const width = Number.isFinite(conf.width) ? conf.width : 60;
-                        let weight = getHueWeight(hh, center, width);
-                        if (weight > 0) {
-                            totalHShift += conf.h * weight;
-                            totalSMult *= Math.exp((conf.s / 100) * HSL_SATURATION_LOG * weight);
-                            totalLShift += (conf.l / 100) * weight;
-                        }
-                    }
-
-                    hh = (hh + totalHShift) % 360;
-                    if (hh < 0) hh += 360;
-                    ss = Math.max(0, Math.min(1, ss * totalSMult));
-                    ll = applyLightnessLikePhotoshop(ll, totalLShift);
-                }
-
-                [r, g, b] = hslToRgb(hh, ss, ll);
-                r /= 255; g /= 255; b /= 255;
-            }
-
-            if (hasCurve) {
-                let ri = Math.max(0, Math.min(255, Math.round(r * 255)));
-                let gi = Math.max(0, Math.min(255, Math.round(g * 255)));
-                let bi = Math.max(0, Math.min(255, Math.round(b * 255)));
-
-                ri = curveRgbLut[ri];
-                gi = curveRgbLut[gi];
-                bi = curveRgbLut[bi];
-                ri = curveRLut[ri];
-                gi = curveGLut[gi];
-                bi = curveBLut[bi];
-
-                r = ri / 255;
-                g = gi / 255;
-                b = bi / 255;
-            }
-
-            targetData[i] = r * 255;
-            targetData[i+1] = g * 255;
-            targetData[i+2] = b * 255;
-            targetData[i+3] = srcData[i+3];
-        }
-    };
-
-    const applyDetailBlend = (targetCtx, w, h, radius, amount, midtoneOnly = false) => {
-        if (!amount) return;
-        const base = targetCtx.getImageData(0, 0, w, h);
-        const baseData = base.data;
-
-        const blurCanvas = document.createElement("canvas");
-        blurCanvas.width = w;
-        blurCanvas.height = h;
-        const blurCtx = blurCanvas.getContext("2d");
-        blurCtx.filter = `blur(${Math.max(0.1, radius)}px)`;
-        blurCtx.drawImage(targetCtx.canvas, 0, 0);
-        const blurData = blurCtx.getImageData(0, 0, w, h).data;
-
-        for (let i = 0; i < baseData.length; i += 4) {
-            const r0 = baseData[i];
-            const g0 = baseData[i + 1];
-            const b0 = baseData[i + 2];
-            let weight = 1;
-            if (midtoneOnly) {
-                const l = (r0 * 0.2126 + g0 * 0.7152 + b0 * 0.0722) / 255;
-                weight = 1 - Math.max(0, Math.min(1, Math.abs(l - 0.5) * 2));
-                weight = Math.pow(weight, 1.25);
-            }
-            const a = amount * weight;
-            baseData[i] = Math.max(0, Math.min(255, r0 + (r0 - blurData[i]) * a));
-            baseData[i + 1] = Math.max(0, Math.min(255, g0 + (g0 - blurData[i + 1]) * a));
-            baseData[i + 2] = Math.max(0, Math.min(255, b0 + (b0 - blurData[i + 2]) * a));
-        }
-
-        targetCtx.putImageData(base, 0, 0);
-    };
-
-    const applyDetailStages = (targetCtx, w, h, crState, scale = 1) => {
-        const texAmount = crState.cr_tex / 140.0;
-        const clarAmount = crState.cr_clar / 130.0;
-        const sharpAmount = crState.cr_sharp / 110.0;
-        if (texAmount !== 0) applyDetailBlend(targetCtx, w, h, 0.9 * scale, texAmount, false);
-        if (clarAmount !== 0) applyDetailBlend(targetCtx, w, h, 2.0 * scale, clarAmount, true);
-        if (sharpAmount > 0) applyDetailBlend(targetCtx, w, h, 1.6 * scale, sharpAmount, false);
-    };
 
     saveDiskBtn.onclick = () => {
         saveDiskBtn.innerText = "Processing...";
@@ -1330,11 +1094,17 @@ export function openTrixCameraRawEditor(node) {
         }, 50);
     };
 
-    const saveBtn = document.createElement("button");
-    saveBtn.innerText = "Save";
-    saveBtn.style.cssText = "flex: 1; padding: 10px; background: #33789a; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;";
-    saveBtn.onmouseenter = () => { saveBtn.style.background = "#3f8eb4"; };
-    saveBtn.onmouseleave = () => { saveBtn.style.background = "#33789a"; };
+    const saveSettingsBtn = document.createElement("button");
+    saveSettingsBtn.innerText = "Save Settings";
+    saveSettingsBtn.style.cssText = "flex: 1; padding: 10px; background: #2a2a2f; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s;";
+    saveSettingsBtn.onmouseenter = () => { saveSettingsBtn.style.background = "#333a45"; };
+    saveSettingsBtn.onmouseleave = () => { saveSettingsBtn.style.background = "#2a2a2f"; };
+
+    const saveToNodeBtn = document.createElement("button");
+    saveToNodeBtn.innerText = "Save to Node";
+    saveToNodeBtn.style.cssText = "flex: 1; padding: 10px; background: #33789a; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 11px;";
+    saveToNodeBtn.onmouseenter = () => { saveToNodeBtn.style.background = "#3f8eb4"; };
+    saveToNodeBtn.onmouseleave = () => { saveToNodeBtn.style.background = "#33789a"; };
 
     const closeEditor = () => {
         abortCtrl.abort();
@@ -1342,7 +1112,8 @@ export function openTrixCameraRawEditor(node) {
     };
 
     cancelBtn.onclick = closeEditor;
-    saveBtn.onclick = () => {
+    
+    saveSettingsBtn.onclick = () => {
         for (const key in state) {
             const w = getW(key);
             if (w) w.value = state[key];
@@ -1368,8 +1139,142 @@ export function openTrixCameraRawEditor(node) {
         closeEditor();
     };
 
-    btnContainer.append(cancelBtn, saveDiskBtn, saveBtn);
-    sidebar.appendChild(btnContainer);
+    saveToNodeBtn.onclick = () => {
+        saveToNodeBtn.disabled = true;
+        saveToNodeBtn.innerText = "Saving...";
+        
+        setTimeout(() => {
+            const filename = trixCropFilename(node.id);
+            const hqW = origImgObj.naturalWidth;
+            const hqH = origImgObj.naturalHeight;
+            
+            const tCvs = document.createElement("canvas");
+            tCvs.width = hqW; tCvs.height = hqH;
+            const tCtx = tCvs.getContext("2d", { willReadFrequently: true });
+            
+            let parentFilterStr = "";
+            if (node.inputs) {
+                const inImageLink = node.inputs.find(inp => inp.name === "in_image");
+                if (inImageLink && inImageLink.link !== null && app.graph) {
+                    const linkInfo = app.graph.links[inImageLink.link];
+                    if (linkInfo) {
+                        const originNode = app.graph.getNodeById(linkInfo.origin_id);
+                        if (originNode && originNode.comfyClass === "TrixLoadImageAIO" && originNode.imgTagRef) {
+                            parentFilterStr = originNode.imgTagRef.style.filter || "";
+                            if (parentFilterStr === "none") parentFilterStr = "";
+                        }
+                    }
+                }
+            }
+
+            tCtx.filter = parentFilterStr || "none";
+            tCtx.drawImage(origImgObj, 0, 0, hqW, hqH);
+            tCtx.filter = "none";
+            
+            const srcImgData = tCtx.getImageData(0, 0, hqW, hqH);
+            const outImgData = tCtx.createImageData(hqW, hqH);
+            
+            processPixels(srcImgData.data, outImgData.data, hqW, hqH, state, hslState, curvesState);
+            tCtx.putImageData(outImgData, 0, 0);
+            
+            const blur = state.cr_blur;
+            const scaleRatio = hqW / pW; 
+
+            applyDetailStages(tCtx, hqW, hqH, state, scaleRatio);
+
+            if (blur > 0) {
+                const bCvs = document.createElement("canvas");
+                bCvs.width = hqW; bCvs.height = hqH;
+                const bCtx = bCvs.getContext("2d");
+                bCtx.filter = `blur(${(blur/10) * scaleRatio}px)`;
+                bCtx.drawImage(tCvs, 0, 0);
+                tCtx.clearRect(0, 0, hqW, hqH);
+                tCtx.drawImage(bCvs, 0, 0);
+            }
+
+            tCvs.toBlob(async (blob) => {
+                if (!blob) {
+                    console.error("Failed to create blob for saving");
+                    saveToNodeBtn.disabled = false;
+                    saveToNodeBtn.innerText = "Save to Node";
+                    return;
+                }
+                
+                try {
+                    const file = new File([blob], filename, { type: "image/png" });
+                    const body = new FormData();
+                    body.append("image", file, filename);
+                    body.append("type", "input");
+                    body.append("subfolder", TRIX_AIO_SUBFOLDER);
+                    body.append("overwrite", "true");
+                    
+                    const uploadResp = await fetch("/upload/image", { method: "POST", body: body });
+                    if (uploadResp.status === 200) {
+                        const uploadData = await uploadResp.json();
+                        const fullPath = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
+                        
+                        node._trix_image_version = (node._trix_image_version || 0) + 1;
+                        const imgWidget = node.widgets.find(w => w.name === "image");
+                        if (imgWidget) {
+                            node._isChangingImage = true;
+                            imgWidget.value = fullPath;
+                            if (imgWidget.callback) imgWidget.callback(fullPath);
+                        }
+
+                        // Reset all Camera Raw settings on the node since they are now baked into the image
+                        for (const key in state) {
+                            const w = getW(key);
+                            if (w) w.value = 0;
+                        }
+                        const crE = getW("cr_enable");
+                        if (crE) crE.value = false;
+                        if (node._checkboxCREnable) node._checkboxCREnable.checked = false;
+                        
+                        const wHslData = getW("hsl_data");
+                        const wHslActive = getW("hsl_active");
+                        if (wHslData) wHslData.value = "{}";
+                        if (wHslActive) wHslActive.value = false;
+                        
+                        const wCurveData = getW("curve_data");
+                        const wCurveActive = getW("curve_active");
+                        if (wCurveData) wCurveData.value = "{}";
+                        if (wCurveActive) wCurveActive.value = false;
+
+                        const modeWidget = getW("mode");
+                        if (modeWidget) modeWidget.value = "Base";
+                        node._showCameraRawMenu = false; 
+
+                        if (node.syncHTMLRef) node.syncHTMLRef();
+                        if (node.updateUIRef) node.updateUIRef();
+                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                        closeEditor();
+
+                        // Notify downstream nodes to pull the updated preview/image in real-time
+                        setTimeout(() => {
+                            if (app.graph) {
+                                app.graph._nodes.forEach(n => {
+                                    if (typeof n.pullLivePreviewRef === "function") {
+                                        n.pullLivePreviewRef();
+                                    }
+                                });
+                            }
+                        }, 150);
+                    } else {
+                        throw new Error(`Upload failed: ${uploadResp.status}`);
+                    }
+                } catch (e) {
+                    console.error("Save to Node upload failed", e);
+                    alert("Failed to save image to node: " + e);
+                    saveToNodeBtn.disabled = false;
+                    saveToNodeBtn.innerText = "Save to Node";
+                }
+            }, "image/png");
+        }, 50);
+    };
+
+    actionsWrapper.append(cancelBtn, btnRow);
+    btnRow.append(saveDiskBtn, saveSettingsBtn, saveToNodeBtn);
+    sidebar.appendChild(actionsWrapper);
     overlay.append(workspace, sidebar);
     document.body.appendChild(overlay);
 
@@ -1419,7 +1324,7 @@ export function openTrixCameraRawEditor(node) {
         }, 50);
     };
 
-    const renderPixels = (renderOriginal = false) => {
+    const renderPixels = (renderOriginal = false, fastMode = false) => {
         if (!baseImgData) return;
 
         const activeState = renderOriginal ? {
@@ -1439,15 +1344,15 @@ export function openTrixCameraRawEditor(node) {
         processPixels(baseImgData, imgData.data, pW, pH, activeState, activeHslState, activeCurvesState);
 
         ctx.putImageData(imgData, 0, 0);
+        
         applyDetailStages(ctx, pW, pH, activeState, 1);
 
         const blur = activeState.cr_blur;
 
         if (blur > 0) {
-            const tempCvs = document.createElement("canvas");
-            tempCvs.width = pW; tempCvs.height = pH;
-            const tCtx = tempCvs.getContext("2d");
+            const { canvas: tempCvs, ctx: tCtx } = getBlurCtx(pW, pH);
             tCtx.filter = `blur(${blur/10}px)`;
+            tCtx.clearRect(0, 0, pW, pH);
             tCtx.drawImage(canvas, 0, 0);
             ctx.clearRect(0, 0, pW, pH);
             ctx.drawImage(tempCvs, 0, 0);
@@ -1458,7 +1363,10 @@ export function openTrixCameraRawEditor(node) {
 
     const scheduleRender = () => {
         if (renderTimer) clearTimeout(renderTimer);
-        renderTimer = setTimeout(renderPixels, 50);
+        
+        renderTimer = setTimeout(() => {
+            renderPixels(false, false);
+        }, 16);
     };
 
     let isDrawingRAF = false;
@@ -1553,7 +1461,19 @@ export function openTrixCameraRawEditor(node) {
             pushCrHistory();
         }
     };
-    const onResize = () => { centerImage(); };
+    const onResize = () => {
+        const currentW = workspace.clientWidth || 0;
+        const currentH = workspace.clientHeight || 0;
+        if (lastWorkspaceW && lastWorkspaceH) {
+            const dw = currentW - lastWorkspaceW;
+            const dh = currentH - lastWorkspaceH;
+            camera.x += dw / 2;
+            camera.y += dh / 2;
+        }
+        lastWorkspaceW = currentW;
+        lastWorkspaceH = currentH;
+        drawWorkspace();
+    };
     
     window.addEventListener("mouseup", onMouseUp, { signal: abortCtrl.signal });
     window.addEventListener("resize", onResize, { signal: abortCtrl.signal });
@@ -1570,5 +1490,288 @@ export function openTrixCameraRawEditor(node) {
         if (origImgObj.complete) { initCanvas(); } 
         else { origImgObj.onload = initCanvas; }
     }, 10);
+}
+
+export function processPixels(srcData, targetData, w, h, crState, hState, cState) {
+    const exp = crState.cr_exp / 100.0;
+    const cont = crState.cr_cont / 100.0;
+    const high = crState.cr_high / 100.0;
+    const shad = crState.cr_shad / 100.0;
+    const white = crState.cr_white / 100.0;
+    const black = crState.cr_black / 100.0;
+    const temp = crState.cr_temp / 200.0;
+    const tint = crState.cr_tint / 400.0;
+    const colorful = crState.cr_colorfulness / 100.0;
+    const sat = crState.cr_sat / 100.0;
+    const dehz = crState.cr_dehz;
+    const grain = crState.cr_grain / 200.0;
+    const vig = crState.cr_vignette / 50.0;
+    const hasHsl = hState.colorize || ['master', 'reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'].some(ch => {
+        const conf = hState[ch] || {};
+        return conf.h !== 0 || conf.s !== 0 || conf.l !== 0;
+    });
+    const curveState = ensureCurveState(cState);
+    const hasCurve = curveHasAdjustments(curveState);
+    const curveRgbLut = hasCurve ? buildCurveLut(curveState.rgb) : null;
+    const curveRLut = hasCurve ? buildCurveLut(curveState.r) : null;
+    const curveGLut = hasCurve ? buildCurveLut(curveState.g) : null;
+    const curveBLut = hasCurve ? buildCurveLut(curveState.b) : null;
+
+    const getHueWeight = (hh, center, width) => {
+        let diff = Math.abs(hh - center);
+        if (diff > 180) diff = 360 - diff;
+        const half = Math.max(5, width / 2);
+        const falloff = Math.max(12, half * 0.65);
+        if (diff <= half) return 1;
+        if (diff <= half + falloff) {
+            const t = (diff - half) / falloff;
+            return 0.5 * (1 + Math.cos(Math.PI * t));
+        }
+        return 0;
+    };
+
+    for (let i = 0; i < srcData.length; i += 4) {
+        let r = srcData[i] / 255.0;
+        let g = srcData[i+1] / 255.0;
+        let b = srcData[i+2] / 255.0;
+
+        if (temp !== 0 || tint !== 0) {
+            r += temp + (tint * 2.0);
+            g -= tint * 2.0;
+            b -= temp - (tint * 2.0);
+        }
+
+        let luma = r * 0.299 + g * 0.587 + b * 0.114;
+
+        if (exp !== 0) {
+            const mult = Math.pow(2.0, exp * 2.0);
+            r *= mult; g *= mult; b *= mult;
+            luma *= mult;
+        }
+
+        if (shad !== 0) {
+            let mask = (0.72 - luma) / 0.72;
+            if (mask < 0) mask = 0; else if (mask > 1) mask = 1;
+            mask = mask * mask * (3 - 2 * mask);
+            if (shad >= 0) {
+                const lift = mask * shad * 0.85;
+                r += (1.0 - r) * lift;
+                g += (1.0 - g) * lift;
+                b += (1.0 - b) * lift;
+            } else {
+                const darken = mask * (-shad) * 0.8;
+                r *= 1.0 - darken;
+                g *= 1.0 - darken;
+                b *= 1.0 - darken;
+            }
+        }
+
+        if (high !== 0) {
+            let mask = (luma - 0.5) / 0.5;
+            if (mask < 0) mask = 0; else if (mask > 1) mask = 1;
+            const adj = mask * high * 0.5;
+            r += r * adj; g += g * adj; b += b * adj;
+        }
+
+        if (white !== 0) {
+            const adj = white * 0.5;
+            r += r * r * adj; g += g * g * adj; b += b * b * adj;
+        }
+
+        if (black !== 0) {
+            const adj = black * 0.5;
+            r -= (1.0 - r) * (1.0 - r) * adj;
+            g -= (1.0 - g) * (1.0 - g) * adj;
+            b -= (1.0 - b) * (1.0 - b) * adj;
+        }
+
+        if (cont !== 0) {
+            const f = 1.0 + cont;
+            r = (r - 0.5) * f + 0.5;
+            g = (g - 0.5) * f + 0.5;
+            b = (b - 0.5) * f + 0.5;
+        }
+
+        if (sat !== 0) {
+            luma = r * 0.299 + g * 0.587 + b * 0.114;
+            r += (r - luma) * sat;
+            g += (g - luma) * sat;
+            b += (b - luma) * sat;
+        }
+
+        if (colorful !== 0) {
+            luma = r * 0.299 + g * 0.587 + b * 0.114;
+            const maxC = Math.max(r, g, b);
+            const minC = Math.min(r, g, b);
+            const sat_mask = 1.0 - (maxC - minC);
+            const adj = colorful * sat_mask;
+            r += (r - luma) * adj;
+            g += (g - luma) * adj;
+            b += (b - luma) * adj;
+        }
+
+        if (dehz !== 0) {
+            const dehzN = dehz / 150.0;
+            const maxC = Math.max(r, g, b);
+            const minC = Math.min(r, g, b);
+            const haze = Math.max(0, Math.min(1, 1 - (maxC - minC) * 2));
+            const mid = Math.max(0, Math.min(1, 1 - Math.abs(luma - 0.5) * 2));
+            const weight = Math.max(0, Math.min(1, 0.35 + 0.65 * haze * mid));
+
+            if (dehzN > 0) {
+                const contrast = 1 + dehzN * 0.9 * weight;
+                r = (r - 0.5) * contrast + 0.5;
+                g = (g - 0.5) * contrast + 0.5;
+                b = (b - 0.5) * contrast + 0.5;
+                const neutral = (r + g + b) / 3;
+                const satBoost = dehzN * 0.18 * weight;
+                r += (r - neutral) * satBoost;
+                g += (g - neutral) * satBoost;
+                b += (b - neutral) * satBoost;
+            } else {
+                const soften = (-dehzN) * 0.45 * weight;
+                r = (r - 0.5) * (1 - soften) + 0.5;
+                g = (g - 0.5) * (1 - soften) + 0.5;
+                b = (b - 0.5) * (1 - soften) + 0.5;
+            }
+        }
+
+        if (vig !== 0) {
+            const px = (i / 4) % w;
+            const py = Math.floor((i / 4) / w);
+            const cx = w / 2;
+            const cy = h / 2;
+            const radius = Math.sqrt(Math.pow(px - cx, 2) + Math.pow(py - cy, 2));
+            const max_rad = Math.sqrt(cx*cx + cy*cy);
+            let v_mask = 1.0 - ((radius / max_rad) - 0.3) * vig;
+            if (v_mask < 0) v_mask = 0; else if (v_mask > 1) v_mask = 1;
+            r *= v_mask; g *= v_mask; b *= v_mask;
+        }
+
+        if (grain !== 0) {
+            const noise = (Math.random() - 0.5) * 2.0 * grain;
+            r += noise; g += noise; b += noise;
+        }
+
+        r = Math.max(0, Math.min(1, r));
+        g = Math.max(0, Math.min(1, g));
+        b = Math.max(0, Math.min(1, b));
+
+        if (hasHsl) {
+            let [hh, ss, ll] = rgbToHsl(r * 255, g * 255, b * 255);
+            
+            if (hState.colorize) {
+                hh = hState.master.h;
+                if (hh < 0) hh += 360;
+                ss = Math.max(0, Math.min(1, 0.5 + (hState.master.s / 100)));
+                ll = applyLightnessLikePhotoshop(ll, hState.master.l / 100);
+            } else {
+                let totalHShift = hState.master.h;
+                let totalSMult = Math.exp((hState.master.s / 100) * HSL_SATURATION_LOG);
+                let totalLShift = hState.master.l / 100;
+
+                const channels = ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas'];
+                for (let ch of channels) {
+                    let conf = hState[ch] || { h: 0, s: 0, l: 0, center: 0, width: 60 };
+                    if (conf.h === 0 && conf.s === 0 && conf.l === 0) continue;
+                    const center = Number.isFinite(conf.center) ? conf.center : 0;
+                    const width = Number.isFinite(conf.width) ? conf.width : 60;
+                    let weight = getHueWeight(hh, center, width);
+                    if (weight > 0) {
+                        totalHShift += conf.h * weight;
+                        totalSMult *= Math.exp((conf.s / 100) * HSL_SATURATION_LOG * weight);
+                        totalLShift += (conf.l / 100) * weight;
+                    }
+                }
+
+                hh = (hh + totalHShift) % 360;
+                if (hh < 0) hh += 360;
+                ss = Math.max(0, Math.min(1, ss * totalSMult));
+                ll = applyLightnessLikePhotoshop(ll, totalLShift);
+            }
+
+            [r, g, b] = hslToRgb(hh, ss, ll);
+            r /= 255; g /= 255; b /= 255;
+        }
+
+        if (hasCurve) {
+            let ri = Math.max(0, Math.min(255, Math.round(r * 255)));
+            let gi = Math.max(0, Math.min(255, Math.round(g * 255)));
+            let bi = Math.max(0, Math.min(255, Math.round(b * 255)));
+
+            ri = curveRgbLut[ri];
+            gi = curveRgbLut[gi];
+            bi = curveRgbLut[bi];
+            ri = curveRLut[ri];
+            gi = curveGLut[gi];
+            bi = curveBLut[bi];
+
+            r = ri / 255;
+            g = gi / 255;
+            b = bi / 255;
+        }
+
+        targetData[i] = r * 255;
+        targetData[i+1] = g * 255;
+        targetData[i+2] = b * 255;
+        targetData[i+3] = srcData[i+3];
+    }
+}
+
+let cachedBlurCanvas = null;
+let cachedBlurCtx = null;
+
+export function getBlurCtx(w, h) {
+    if (!cachedBlurCanvas) {
+        cachedBlurCanvas = document.createElement("canvas");
+        cachedBlurCtx = cachedBlurCanvas.getContext("2d");
+    }
+    if (cachedBlurCanvas.width !== w || cachedBlurCanvas.height !== h) {
+        cachedBlurCanvas.width = w;
+        cachedBlurCanvas.height = h;
+    }
+    return { canvas: cachedBlurCanvas, ctx: cachedBlurCtx };
+}
+
+export function applyDetailBlend(targetCtx, w, h, radius, amount, midtoneOnly = false) {
+    if (!amount) return;
+    const base = targetCtx.getImageData(0, 0, w, h);
+    const baseData = base.data;
+
+    const { canvas: blurCanvas, ctx: blurCtx } = getBlurCtx(w, h);
+    blurCtx.filter = `blur(${Math.max(0.1, radius)}px)`;
+    blurCtx.clearRect(0, 0, w, h);
+    blurCtx.drawImage(targetCtx.canvas, 0, 0);
+    const blurData = blurCtx.getImageData(0, 0, w, h).data;
+
+    const len = baseData.length;
+    for (let i = 0; i < len; i += 4) {
+        const r0 = baseData[i];
+        const g0 = baseData[i + 1];
+        const b0 = baseData[i + 2];
+        let weight = 1;
+        if (midtoneOnly) {
+            const l = (r0 * 0.2126 + g0 * 0.7152 + b0 * 0.0722) / 255;
+            weight = 1 - Math.max(0, Math.min(1, Math.abs(l - 0.5) * 2));
+            if (weight > 0) {
+                weight = Math.pow(weight, 1.25);
+            }
+        }
+        const a = amount * weight;
+        baseData[i] = Math.max(0, Math.min(255, r0 + (r0 - blurData[i]) * a));
+        baseData[i + 1] = Math.max(0, Math.min(255, g0 + (g0 - blurData[i + 1]) * a));
+        baseData[i + 2] = Math.max(0, Math.min(255, b0 + (b0 - blurData[i + 2]) * a));
+    }
+
+    targetCtx.putImageData(base, 0, 0);
+}
+
+export function applyDetailStages(targetCtx, w, h, crState, scale = 1) {
+    const texAmount = crState.cr_tex / 140.0;
+    const clarAmount = crState.cr_clar / 130.0;
+    const sharpAmount = crState.cr_sharp / 110.0;
+    if (texAmount !== 0) applyDetailBlend(targetCtx, w, h, 0.9 * scale, texAmount, false);
+    if (clarAmount !== 0) applyDetailBlend(targetCtx, w, h, 2.0 * scale, clarAmount, true);
+    if (sharpAmount > 0) applyDetailBlend(targetCtx, w, h, 1.6 * scale, sharpAmount, false);
 }
 
