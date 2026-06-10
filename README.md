@@ -85,7 +85,7 @@ A powerful editing space combining traditional brushes with advanced neural netw
 #### Features & AI Models:
 * **Segment Anything (SAM)**: Toggle the SAM tool, select a model, and click on an object to segment it.
   - Supported models: [SAM 2.1 Hiera Tiny](https://huggingface.co/Kijai/sam2-safetensors), [SAM 2.1 Hiera Large](https://huggingface.co/Kijai/sam2-safetensors), and [SAM 3](https://huggingface.co/yolain/sam3-safetensors).
-  - Prompts: Left-click to add foreground points (+), Right-click to add background points (-).
+  - Prompts: Left-click to add foreground points (+), Right-click to add multiple points (++).
   - **SAM PRO Mode**: When enabled, the model automatically post-processes the mask to eliminate small noise (salt-and-pepper noise), closes internal gaps/holes using morphological filters, and isolates only the connected mask clusters containing your prompt points.
 * **Text Detection (GroundingDINO)**: Type text queries (e.g., "glasses", "hair") and click Detect to automatically generate masks using the [GroundingDINO SwinT OGC](https://huggingface.co/IDEA-Research/grounding-dino-tiny) model.
 * **Remove Background (RMBG)**: Isolate objects or subjects instantly.
