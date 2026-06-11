@@ -955,7 +955,30 @@ class TrixLoadImageAIO:
 
     @classmethod
     def IS_CHANGED(s, **kwargs):
-        return float("NaN")
+        import hashlib
+        m = hashlib.sha256()
+        
+        # Hash all input parameter values that are basic types
+        for key in sorted(kwargs.keys()):
+            val = kwargs[key]
+            if isinstance(val, (str, int, float, bool)):
+                m.update(f"{key}:{val}".encode('utf-8'))
+                
+        # Hash the input image filename's size and mtime if present
+        image = kwargs.get("image", None)
+        if image:
+            try:
+                import folder_paths
+                image_path = folder_paths.get_annotated_filepath(image)
+                if os.path.exists(image_path):
+                    import os
+                    mtime = os.path.getmtime(image_path)
+                    size = os.path.getsize(image_path)
+                    m.update(f"file:{image_path}:{mtime}:{size}".encode('utf-8'))
+            except Exception:
+                pass
+                
+        return m.hexdigest()
 
 # ==============================================================================
 # TRIXLOADER HTTP API ROUTES FOR ADVANCED MASK EDITOR
