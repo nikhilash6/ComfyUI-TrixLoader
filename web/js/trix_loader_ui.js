@@ -540,6 +540,7 @@ app.registerExtension({
             };
 
             nodeType.prototype.onDrawBackground = function(ctx) {
+                if (this.flags.collapsed) return;
                 if (!Object.getOwnPropertyDescriptor(this, "color") || Object.getOwnPropertyDescriptor(this, "color").get === undefined) {
                     Object.defineProperty(this, "color", {
                         get: function() { return TRIX_NODE_OUTLINE; },
@@ -3687,6 +3688,10 @@ app.registerExtension({
 
             const origOnDrawForeground = nodeType.prototype.onDrawForeground;
             nodeType.prototype.onDrawForeground = function(ctx) {
+                if (this.flags.collapsed) {
+                    if (origOnDrawForeground) origOnDrawForeground.apply(this, arguments);
+                    return;
+                }
                 if (!Object.getOwnPropertyDescriptor(this, "color") || Object.getOwnPropertyDescriptor(this, "color").get === undefined) {
                     Object.defineProperty(this, "color", {
                         get: function() { return TRIX_NODE_OUTLINE; },
