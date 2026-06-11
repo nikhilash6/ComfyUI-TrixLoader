@@ -518,6 +518,9 @@ export function openTrixMaskEditor(node) {
     samLabelContainer.append(samLabel, samDeviceSelect);
     advancedBlock.appendChild(samLabelContainer);
 
+    let liveBtn;
+    let updateLiveStyle;
+
     const samSelect = createSidebarSelect([
         { value: "sam2.1_hiera_tiny-fp16.safetensors", text: "(fast) sam2.1_hiera_tiny-fp16 (74MB)" },
         { value: "sam2.1_hiera_large-fp16.safetensors", text: "(balance) sam2.1_hiera_large-fp16 (430MB)" },
@@ -559,6 +562,13 @@ export function openTrixMaskEditor(node) {
         const defaultVal = selectedModel.startsWith("sam2.1") ? "0.35" : "0.50";
         samThreshSlider.value = defaultVal;
         samThreshValInput.value = defaultVal;
+
+        // Auto-disable live mode when model changes
+        if (liveBtn && liveBtn.isActive) {
+            liveBtn.isActive = false;
+            if (updateLiveStyle) updateLiveStyle();
+            node.properties.samLiveMode = false;
+        }
 
         clearSAMHover();
         requestDraw();
@@ -656,9 +666,13 @@ export function openTrixMaskEditor(node) {
     const samRow = document.createElement("div");
     samRow.style.cssText = "display: flex; gap: 8px; width: 100%; align-items: center; margin-bottom: 16px; flex-shrink: 0;";
 
-    const samBtn = createSidebarButton("Object Selector Tool", false, true);
+    const samBtn = createSidebarButton("Select Object", false, true);
     samBtn.style.flex = "1";
     samBtn.style.marginBottom = "0";
+    samBtn.style.fontSize = "10.5px";
+    samBtn.style.paddingLeft = "4px";
+    samBtn.style.paddingRight = "4px";
+    samBtn.style.whiteSpace = "nowrap";
 
     const proBtn = document.createElement("button");
     proBtn.innerText = "PRO";
@@ -670,6 +684,7 @@ export function openTrixMaskEditor(node) {
         border: 1px solid #444; background: #2a2a2f; color: #ccc;
     `;
     proBtn.isActive = !!node.properties.samProMode;
+    proBtn.title = "PRO mode: Focuses SAM on the active square area when zoomed, increasing accuracy for fine details and ignoring background features outside the box.";
     
     const updateProStyle = () => {
         if (proBtn.isActive) {
@@ -702,7 +717,93 @@ export function openTrixMaskEditor(node) {
         updateProStyle();
     };
 
-    samRow.append(samBtn, proBtn);
+    liveBtn = document.createElement("button");
+    liveBtn.innerText = "LIVE";
+    liveBtn.title = "Enable real-time hover preview for SAM";
+    liveBtn.style.cssText = `
+        width: 50px; padding: 10px 0; border-radius: 6px; font-weight: bold;
+        font-size: 12px; cursor: pointer; transition: all 0.2s;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        flex-shrink: 0; text-align: center;
+        border: 1px solid #444; background: #2a2a2f; color: #ccc;
+    `;
+    if (node.properties.samLiveMode === undefined) {
+        node.properties.samLiveMode = false;
+    }
+    liveBtn.isActive = !!node.properties.samLiveMode;
+    
+    updateLiveStyle = () => {
+        if (liveBtn.isActive) {
+            liveBtn.style.background = TRIX_ACCENT;
+            liveBtn.style.borderColor = TRIX_ACCENT;
+            liveBtn.style.color = "#fff";
+        } else {
+            liveBtn.style.background = "#2a2a2f";
+            liveBtn.style.borderColor = "#444";
+            liveBtn.style.color = "#ccc";
+        }
+    };
+    updateLiveStyle();
+
+    const preloadSAMModel = async () => {
+        if (isDownloadingSAM) return;
+        const selectedModel = samSelect.value;
+        const loaded = await checkAndDownloadModel("sam", selectedModel);
+        if (!loaded) return;
+        try {
+            const nodeImgVal = getSAMImageParam();
+            await fetch('/trix/load_model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: selectedModel,
+                    image: nodeImgVal,
+                    device: samDeviceSelect.value
+                })
+            });
+            console.log("TrixLoader: SAM model preloaded successfully.");
+        } catch (e) {
+            console.error("TrixLoader: Failed to preload SAM model:", e);
+        }
+    };
+
+    liveBtn.onclick = () => {
+        liveBtn.isActive = !liveBtn.isActive;
+        updateLiveStyle();
+        node.properties.samLiveMode = liveBtn.isActive;
+        if (liveBtn.isActive) {
+            if (samBtn.isActive) {
+                preloadSAMModel();
+            }
+        } else {
+            // Immediately clear hover preview
+            if (samHoverTimeout) {
+                clearTimeout(samHoverTimeout);
+                samHoverTimeout = null;
+            }
+            if (samHoverAbortCtrl) {
+                samHoverAbortCtrl.abort();
+                samHoverAbortCtrl = null;
+            }
+            samHoverCanvas = null;
+            samHoverCoords = null;
+            requestDraw();
+        }
+    };
+    liveBtn.onmouseenter = () => {
+        if (liveBtn.isActive) {
+            liveBtn.style.background = TRIX_ACCENT_HOVER;
+            liveBtn.style.color = "#fff";
+        } else {
+            liveBtn.style.background = "#333a45";
+            liveBtn.style.color = "#fff";
+        }
+    };
+    liveBtn.onmouseleave = () => {
+        updateLiveStyle();
+    };
+
+    samRow.append(samBtn, proBtn, liveBtn);
     advancedBlock.appendChild(samRow);
 
     // SAM Text Prompt Container
@@ -764,7 +865,10 @@ export function openTrixMaskEditor(node) {
                     text_prompt: textVal,
                     threshold: parseFloat(samThreshSlider.value),
                     device: samDeviceSelect.value,
-                    pro: proBtn.isActive
+                    pro: proBtn.isActive,
+                    image_width: imgW,
+                    image_height: imgH,
+                    pro_crop: proBtn.isActive ? getSAMProCropBox() : null
                 })
             });
             const result = await resp.json();
@@ -1256,6 +1360,28 @@ export function openTrixMaskEditor(node) {
 
     let imgW = node.imgTagRef.naturalWidth;
     let imgH = node.imgTagRef.naturalHeight;
+
+    const getSAMProCropBox = () => {
+        const viewCx = (editorCanvas.width / 2 - camera.x) / camera.zoom;
+        const viewCy = (editorCanvas.height / 2 - camera.y) / camera.zoom;
+        const viewW = editorCanvas.width / camera.zoom;
+        const viewH = editorCanvas.height / camera.zoom;
+        let side = Math.min(viewW, viewH) * 0.9;
+        side = Math.min(side, imgW, imgH);
+        if (side < 10) side = 10;
+        let cropX = viewCx - side / 2;
+        let cropY = viewCy - side / 2;
+        if (cropX < 0) cropX = 0;
+        if (cropY < 0) cropY = 0;
+        if (cropX + side > imgW) cropX = imgW - side;
+        if (cropY + side > imgH) cropY = imgH - side;
+        return {
+            x: cropX,
+            y: cropY,
+            width: side,
+            height: side
+        };
+    };
 
     // rawMaskCanvas holds the user's base drawn pixels (without grow/blur)
     const rawMaskCanvas = document.createElement("canvas");
@@ -2232,6 +2358,29 @@ export function openTrixMaskEditor(node) {
             ctx.restore();
         }
 
+        // Draw SAM PRO crop box visual guide if active
+        if (samBtn.isActive && proBtn.isActive) {
+            const cropBox = getSAMProCropBox();
+            ctx.save();
+            // 1. Draw dimming overlay outside the crop box
+            ctx.fillStyle = "rgba(0, 0, 0, 0.45)"; // 45% black transparency
+            // Top rect
+            ctx.fillRect(0, 0, imgW, cropBox.y);
+            // Bottom rect
+            ctx.fillRect(0, cropBox.y + cropBox.height, imgW, imgH - (cropBox.y + cropBox.height));
+            // Left rect
+            ctx.fillRect(0, cropBox.y, cropBox.x, cropBox.height);
+            // Right rect
+            ctx.fillRect(cropBox.x + cropBox.width, cropBox.y, imgW - (cropBox.x + cropBox.width), cropBox.height);
+
+            // 2. Draw sky blue guide line
+            ctx.strokeStyle = "rgba(0, 191, 255, 0.85)"; // Sky blue guide line
+            ctx.lineWidth = 2.0 / camera.zoom;
+            ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+            ctx.strokeRect(cropBox.x, cropBox.y, cropBox.width, cropBox.height);
+            ctx.restore();
+        }
+
         // 3. Draw brush outline cursor dynamically
         if (currentMouseImgPos && !samBtn.isActive && !isPanning) {
             ctx.save();
@@ -2580,7 +2729,7 @@ export function openTrixMaskEditor(node) {
         }
 
         if (!isDrawing) {
-            if (samBtn.isActive && x >= 0 && x < imgW && y >= 0 && y < imgH && !isDownloadingSAM) {
+            if (samBtn.isActive && node.properties.samLiveMode && x >= 0 && x < imgW && y >= 0 && y < imgH && !isDownloadingSAM) {
                 if (samHoverTimeout) {
                     clearTimeout(samHoverTimeout);
                 }
@@ -2605,7 +2754,10 @@ export function openTrixMaskEditor(node) {
                             threshold: parseFloat(samThreshSlider.value),
                             device: samDeviceSelect.value,
                             is_hover: true,
-                            pro: proBtn.isActive
+                            pro: proBtn.isActive,
+                            image_width: imgW,
+                            image_height: imgH,
+                            pro_crop: proBtn.isActive ? getSAMProCropBox() : null
                         }),
                         signal: currentSig
                     })
@@ -2631,7 +2783,7 @@ export function openTrixMaskEditor(node) {
                     });
                 }, 70);
             } else {
-                if (samBtn.isActive && (x < 0 || x >= imgW || y < 0 || y >= imgH)) {
+                if (samBtn.isActive) {
                     clearSAMHover();
                 }
             }
@@ -2966,6 +3118,10 @@ export function openTrixMaskEditor(node) {
             // Pre-check and download selected SAM model asynchronously
             const selectedModel = samSelect.value;
             await checkAndDownloadModel("sam", selectedModel);
+            
+            if (liveBtn.isActive) {
+                preloadSAMModel();
+            }
         } else {
             drawBtn.isActive = true;
             if (drawBtn.updateStyle) drawBtn.updateStyle();
@@ -3171,7 +3327,10 @@ export function openTrixMaskEditor(node) {
                     points: points.map(pt => [pt.x, pt.y]),
                     threshold: parseFloat(samThreshSlider.value),
                     device: samDeviceSelect.value,
-                    pro: proBtn.isActive
+                    pro: proBtn.isActive,
+                    image_width: imgW,
+                    image_height: imgH,
+                    pro_crop: proBtn.isActive ? getSAMProCropBox() : null
                 })
             });
             const result = await resp.json();
@@ -3226,7 +3385,10 @@ export function openTrixMaskEditor(node) {
                     y: y,
                     threshold: parseFloat(samThreshSlider.value),
                     device: samDeviceSelect.value,
-                    pro: proBtn.isActive
+                    pro: proBtn.isActive,
+                    image_width: imgW,
+                    image_height: imgH,
+                    pro_crop: proBtn.isActive ? getSAMProCropBox() : null
                 })
             });
             const result = await resp.json();

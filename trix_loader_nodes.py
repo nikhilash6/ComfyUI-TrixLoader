@@ -1004,15 +1004,23 @@ MODEL_FOLDERS = {
 _CURRENT_SAM3_STATE = None
 _CURRENT_SAM3_IMAGE = None
 _CURRENT_SAM3_DEVICE = None
+_CURRENT_SAM3_MTIME = 0.0
+_CURRENT_SAM3_SIZE = 0
+_CURRENT_SAM3_CROP_BOUNDS = None
+_CURRENT_SAM2_CACHE = {}
 _LOADED_MODELS = {}
 _LOADED_MODELS_LOCK = threading.Lock()
 _SAM_INFERENCE_LOCK = threading.Lock()
 
 def offload_other_models(current_model_key):
-    global _LOADED_MODELS, _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE
+    global _LOADED_MODELS, _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE, _CURRENT_SAM3_MTIME, _CURRENT_SAM3_SIZE, _CURRENT_SAM3_CROP_BOUNDS, _CURRENT_SAM2_CACHE
     _CURRENT_SAM3_STATE = None
     _CURRENT_SAM3_IMAGE = None
     _CURRENT_SAM3_DEVICE = None
+    _CURRENT_SAM3_MTIME = 0.0
+    _CURRENT_SAM3_SIZE = 0
+    _CURRENT_SAM3_CROP_BOUNDS = None
+    _CURRENT_SAM2_CACHE.clear()
     with _LOADED_MODELS_LOCK:
         offloaded = False
         for key, model_inst in list(_LOADED_MODELS.items()):
@@ -1970,14 +1978,39 @@ async def api_load_model(request):
             device = "cuda" if torch.cuda.is_available() else "cpu"
         
         def do_load():
-            global _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE
+            global _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE, _CURRENT_SAM3_MTIME, _CURRENT_SAM3_SIZE, _CURRENT_SAM3_CROP_BOUNDS, _CURRENT_SAM2_CACHE
             if "sam2.1" in model_name:
-                get_sam2_predictor(model_name, device)
+                predictor = get_sam2_predictor(model_name, device)
+                if image_filename:
+                    image_path = folder_paths.get_annotated_filepath(image_filename)
+                    if os.path.exists(image_path):
+                        img = Image.open(image_path).convert("RGB")
+                        print("TrixLoader: Pre-computing SAM2.1 features during model load...")
+                        dtype = torch.float16 if device == "cuda" else torch.float32
+                        autocast_ctx = torch.autocast("cuda", dtype=dtype) if device == "cuda" else nullcontext()
+                        with autocast_ctx:
+                            predictor.set_image(img)
+                        try:
+                            stat = os.stat(image_path)
+                            mtime = stat.st_mtime
+                            size = stat.st_size
+                        except Exception:
+                            mtime = 0.0
+                            size = 0
+                        _CURRENT_SAM2_CACHE[f"sam2.1_{model_name}"] = {
+                            "image_path": image_path,
+                            "mtime": mtime,
+                            "size": size,
+                            "crop_bounds": None
+                        }
             elif "sam3" in model_name:
                 if _CURRENT_SAM3_DEVICE != device:
                     _CURRENT_SAM3_STATE = None
                     _CURRENT_SAM3_IMAGE = None
                     _CURRENT_SAM3_DEVICE = device
+                    _CURRENT_SAM3_MTIME = 0.0
+                    _CURRENT_SAM3_SIZE = 0
+                    _CURRENT_SAM3_CROP_BOUNDS = None
                 processor = get_sam3_predictor(device)
                 if image_filename:
                     image_path = folder_paths.get_annotated_filepath(image_filename)
@@ -1989,6 +2022,14 @@ async def api_load_model(request):
                         with autocast_ctx:
                             _CURRENT_SAM3_STATE = processor.set_image(img)
                         _CURRENT_SAM3_IMAGE = image_path
+                        try:
+                            stat = os.stat(image_path)
+                            _CURRENT_SAM3_MTIME = stat.st_mtime
+                            _CURRENT_SAM3_SIZE = stat.st_size
+                        except Exception:
+                            _CURRENT_SAM3_MTIME = 0.0
+                            _CURRENT_SAM3_SIZE = 0
+                        _CURRENT_SAM3_CROP_BOUNDS = None
                         
         await asyncio.to_thread(do_load)
         return web.json_response({"status": "success"})
@@ -2109,8 +2150,78 @@ async def api_sam_predict(request):
             device = "cpu"
         else:
             device = "cuda" if torch.cuda.is_available() else "cpu"
+            
+        # Get image metadata for caching
+        try:
+            stat = os.stat(image_path)
+            mtime = stat.st_mtime
+            size = stat.st_size
+        except Exception:
+            mtime = 0.0
+            size = 0
+
+        image_width = data.get("image_width")
+        image_height = data.get("image_height")
+        pro = data.get("pro", False)
+        pro_crop = data.get("pro_crop", None)
+
+        w_img, h_img = img.size  # original PIL size
+
+        scale_x = w_img / float(image_width) if image_width else 1.0
+        scale_y = h_img / float(image_height) if image_height else 1.0
+
+        crop_bounds = None
+        if pro and pro_crop is not None:
+            crop_x = float(pro_crop.get("x", 0.0))
+            crop_y = float(pro_crop.get("y", 0.0))
+            crop_w = float(pro_crop.get("width", 0.0))
+            crop_h = float(pro_crop.get("height", 0.0))
+
+            x0 = int(round(crop_x * scale_x))
+            y0 = int(round(crop_y * scale_y))
+            w0 = int(round(crop_w * scale_x))
+            h0 = int(round(crop_h * scale_y))
+
+            x0 = max(0, min(x0, w_img - 1))
+            y0 = max(0, min(y0, h_img - 1))
+            x1 = max(x0 + 1, min(x0 + w0, w_img))
+            y1 = max(y0 + 1, min(y0 + h0, h_img))
+
+            crop_bounds = (x0, y0, x1, y1)
+
+        # Prepare image and points for inference
+        if crop_bounds is not None:
+            x0, y0, x1, y1 = crop_bounds
+            img_for_inference = img.crop((x0, y0, x1, y1))
+            crop_w_backend = x1 - x0
+            crop_h_backend = y1 - y0
+
+            inference_points = []
+            for pt in input_points:
+                px = pt[0] * scale_x - x0
+                py = pt[1] * scale_y - y0
+                px = max(0.0, min(px, float(crop_w_backend - 1)))
+                py = max(0.0, min(py, float(crop_h_backend - 1)))
+                inference_points.append([px, py])
+        else:
+            img_for_inference = img
+            inference_points = []
+            for pt in input_points:
+                px = pt[0] * scale_x
+                py = pt[1] * scale_y
+                px = max(0.0, min(px, float(w_img - 1)))
+                py = max(0.0, min(py, float(h_img - 1)))
+                inference_points.append([px, py])
         
         def run_inference():
+            def finalize_mask(mask):
+                if crop_bounds is not None:
+                    x0, y0, x1, y1 = crop_bounds
+                    full_mask = np.zeros((h_img, w_img), dtype=bool)
+                    full_mask[y0:y1, x0:x1] = mask
+                    mask = full_mask
+                return (mask * 255).astype(np.uint8)
+
             # 1. SAM 2.1 TEXT PROMPT via GroundingDINO
             if "sam2.1" in model_name and text_prompt:
                 dino_device = device
@@ -2120,7 +2231,7 @@ async def api_sam_predict(request):
                 if not prompt_str.endswith("."):
                     prompt_str += "."
                     
-                inputs = processor(images=img, text=prompt_str, return_tensors="pt").to(dino_device)
+                inputs = processor(images=img_for_inference, text=prompt_str, return_tensors="pt").to(dino_device)
                 with torch.no_grad():
                     outputs = dino_model(**inputs)
                     
@@ -2129,7 +2240,7 @@ async def api_sam_predict(request):
                     "outputs": outputs,
                     "input_ids": inputs.input_ids,
                     "text_threshold": 0.25,
-                    "target_sizes": [img.size[::-1]]
+                    "target_sizes": [img_for_inference.size[::-1]]
                 }
                 sig = inspect.signature(processor.post_process_grounded_object_detection)
                 if "box_threshold" in sig.parameters:
@@ -2148,9 +2259,9 @@ async def api_sam_predict(request):
                 autocast_ctx = torch.autocast("cuda", dtype=dtype) if device == "cuda" else nullcontext()
                 
                 with autocast_ctx:
-                    predictor.set_image(img)
+                    predictor.set_image(img_for_inference)
                 
-                h, w = img.height, img.width
+                h, w = img_for_inference.height, img_for_inference.width
                 combined_mask = np.zeros((h, w), dtype=bool)
                 
                 if len(boxes) > 0:
@@ -2172,17 +2283,19 @@ async def api_sam_predict(request):
                 else:
                     print(f"TrixLoader: GroundingDINO did not detect any objects for '{text_prompt}'")
                     
-                mask_np = (combined_mask * 255).astype(np.uint8)
-                return mask_np
+                return finalize_mask(combined_mask)
 
             # 2. SAM 3 (TEXT & CLICK PROMPT)
             elif "sam3" in model_name:
-                global _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE
+                global _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE, _CURRENT_SAM3_MTIME, _CURRENT_SAM3_SIZE, _CURRENT_SAM3_CROP_BOUNDS
                 
                 if _CURRENT_SAM3_DEVICE != device:
                     _CURRENT_SAM3_STATE = None
                     _CURRENT_SAM3_IMAGE = None
                     _CURRENT_SAM3_DEVICE = device
+                    _CURRENT_SAM3_MTIME = 0.0
+                    _CURRENT_SAM3_SIZE = 0
+                    _CURRENT_SAM3_CROP_BOUNDS = None
                 
                 # Clean up cached GPU memory fragments
                 try:
@@ -2204,12 +2317,12 @@ async def api_sam_predict(request):
                 
                 if text_prompt:
                     text_prompts = [p.strip() for p in text_prompt.split(',') if p.strip()]
-                    h, w = img.height, img.width
+                    h, w = img_for_inference.height, img_for_inference.width
                     combined_mask = np.zeros((h, w), dtype=bool)
                     
                     # Compute image embedding ONCE
                     with autocast_ctx:
-                        base_state = processor.set_image(img)
+                        base_state = processor.set_image(img_for_inference)
                     
                     for single_prompt in text_prompts:
                         # Copy the state to avoid polluting features across prompts
@@ -2233,33 +2346,43 @@ async def api_sam_predict(request):
                                     m_np = m_tensor[0].cpu().numpy() > 0.5
                                     combined_mask = np.maximum(combined_mask, m_np)
                                 
-                    mask_np = (combined_mask * 255).astype(np.uint8)
-                    return mask_np
+                    return finalize_mask(combined_mask)
                 else:
-                    if _CURRENT_SAM3_IMAGE != image_path or _CURRENT_SAM3_STATE is None:
+                    is_sam3_cache_valid = (
+                        _CURRENT_SAM3_IMAGE == image_path and
+                        _CURRENT_SAM3_STATE is not None and
+                        _CURRENT_SAM3_MTIME == mtime and
+                        _CURRENT_SAM3_SIZE == size and
+                        _CURRENT_SAM3_CROP_BOUNDS == crop_bounds
+                    )
+                    
+                    if not is_sam3_cache_valid:
                         print("TrixLoader: Computing image embedding for SAM3...")
                         with autocast_ctx:
-                            _CURRENT_SAM3_STATE = processor.set_image(img)
+                            _CURRENT_SAM3_STATE = processor.set_image(img_for_inference)
                         _CURRENT_SAM3_IMAGE = image_path
+                        _CURRENT_SAM3_MTIME = mtime
+                        _CURRENT_SAM3_SIZE = size
+                        _CURRENT_SAM3_CROP_BOUNDS = crop_bounds
                         
                     # Extract fresh, unpolluted copy of cached state features
                     state = {
                         'original_height': _CURRENT_SAM3_STATE['original_height'],
                         'original_width': _CURRENT_SAM3_STATE['original_width'],
-                        'backbone_out': _CURRENT_SAM3_STATE['backbone_out']
+                        'backbone_out': dict(_CURRENT_SAM3_STATE['backbone_out'])
                     }
                     
-                    if len(input_points) > 0:
+                    if len(inference_points) > 0:
                         # Normalize point coordinates to [0, 1] range for SAM 3
-                        w_img, h_img = img.size
-                        point_coords = [[float(pt[0]) / w_img, float(pt[1]) / h_img] for pt in input_points]
-                        point_labels = [1] * len(input_points)
+                        w_inference, h_inference = img_for_inference.size
+                        point_coords = [[float(pt[0]) / w_inference, float(pt[1]) / h_inference] for pt in inference_points]
+                        point_labels = [1] * len(inference_points)
                         with autocast_ctx:
                             state = processor.add_point_prompt(point_coords, point_labels, state)
                         
                         masks_logits = state.get('masks_logits', None)
                         scores = state.get('scores', None)
-                        h, w = img.height, img.width
+                        h, w = img_for_inference.height, img_for_inference.width
                         combined_mask = np.zeros((h, w), dtype=bool)
                         
                         if masks_logits is not None and len(masks_logits) > 0:
@@ -2273,10 +2396,9 @@ async def api_sam_predict(request):
                                 best_mask = masks[best_idx, 0].cpu().numpy() > 0.5
                                 combined_mask = best_mask
                     else:
-                        combined_mask = np.zeros((img.height, img.width), dtype=bool)
+                        combined_mask = np.zeros((img_for_inference.height, img_for_inference.width), dtype=bool)
                         
-                    mask_np = (combined_mask * 255).astype(np.uint8)
-                    return mask_np
+                    return finalize_mask(combined_mask)
 
             # 3. SAM 2.1 CLICK PROMPT
             else:
@@ -2286,15 +2408,38 @@ async def api_sam_predict(request):
                 dtype = torch.float16 if device == "cuda" else torch.float32
                 autocast_ctx = torch.autocast("cuda", dtype=dtype) if device == "cuda" else nullcontext()
                 
-                with autocast_ctx:
-                    predictor.set_image(img)
+                # Check if we can reuse the set image
+                global _CURRENT_SAM2_CACHE
+                cache_key = model_key
+                cached = _CURRENT_SAM2_CACHE.get(cache_key)
                 
-                h, w = img.height, img.width
+                is_cache_valid = (
+                    cached is not None and
+                    cached.get("image_path") == image_path and
+                    cached.get("mtime") == mtime and
+                    cached.get("size") == size and
+                    cached.get("crop_bounds") == crop_bounds
+                )
+                
+                if not is_cache_valid:
+                    print(f"TrixLoader: Computing image embedding for SAM2.1 ({model_name})...")
+                    with autocast_ctx:
+                        predictor.set_image(img_for_inference)
+                    _CURRENT_SAM2_CACHE[cache_key] = {
+                        "image_path": image_path,
+                        "mtime": mtime,
+                        "size": size,
+                        "crop_bounds": crop_bounds
+                    }
+                else:
+                    print(f"TrixLoader: Using cached image embedding for SAM2.1 ({model_name}).")
+                
+                h, w = img_for_inference.height, img_for_inference.width
                 combined_mask = np.zeros((h, w), dtype=bool)
                 
-                if len(input_points) > 0:
-                    point_coords = np.array(input_points, dtype=np.float32)
-                    point_labels = np.ones(len(input_points), dtype=np.int32)
+                if len(inference_points) > 0:
+                    point_coords = np.array(inference_points, dtype=np.float32)
+                    point_labels = np.ones(len(inference_points), dtype=np.int32)
                     
                     with autocast_ctx:
                         masks, scores, _ = predictor.predict(
@@ -2312,8 +2457,7 @@ async def api_sam_predict(request):
                         best_logits = best_logits.cpu().numpy()
                     combined_mask = best_logits > logit_threshold
                     
-                mask_np = (combined_mask * 255).astype(np.uint8)
-                return mask_np
+                return finalize_mask(combined_mask)
 
         def run_inference_locked():
             with _SAM_INFERENCE_LOCK:
@@ -2321,10 +2465,9 @@ async def api_sam_predict(request):
 
         mask_np = await asyncio.to_thread(run_inference_locked)
         
-        pro = data.get("pro", False)
         if pro:
             is_text_only = bool(text_prompt) and (data.get("x") is None) and (points_data is None)
-            pts_for_pro = None if is_text_only else input_points
+            pts_for_pro = None if is_text_only else [[pt[0] * scale_x, pt[1] * scale_y] for pt in input_points]
             mask_np = await asyncio.to_thread(postprocess_mask_pro, mask_np, pts_for_pro)
         
         # We keep the active model in GPU VRAM during the session for instant clicks.
@@ -2698,13 +2841,17 @@ def get_birefnet_model(model_name, device):
 async def api_offload_models(request):
     try:
         def run_offload():
-            global _LOADED_MODELS, _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE
+            global _LOADED_MODELS, _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE, _CURRENT_SAM3_MTIME, _CURRENT_SAM3_SIZE, _CURRENT_SAM3_CROP_BOUNDS, _CURRENT_SAM2_CACHE
             with _LOADED_MODELS_LOCK:
                 print(f"TrixLoader: Exiting editor, clearing all cached models completely ({list(_LOADED_MODELS.keys())})...")
                 _LOADED_MODELS.clear()
             _CURRENT_SAM3_STATE = None
             _CURRENT_SAM3_IMAGE = None
             _CURRENT_SAM3_DEVICE = None
+            _CURRENT_SAM3_MTIME = 0.0
+            _CURRENT_SAM3_SIZE = 0
+            _CURRENT_SAM3_CROP_BOUNDS = None
+            _CURRENT_SAM2_CACHE.clear()
             import gc
             gc.collect()
             if torch.cuda.is_available():
@@ -2713,7 +2860,7 @@ async def api_offload_models(request):
         return web.json_response({"status": "success"})
     except Exception as e:
         return web.json_response({"status": "error", "error": str(e)}, status=500)
-
+ 
 @PromptServer.instance.routes.post('/trix/unload_model')
 async def api_unload_model(request):
     try:
@@ -2721,7 +2868,7 @@ async def api_unload_model(request):
         model_type = data.get("type") # "sam", "bg", or "all"
         
         def run_unload():
-            global _LOADED_MODELS, _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE
+            global _LOADED_MODELS, _CURRENT_SAM3_STATE, _CURRENT_SAM3_IMAGE, _CURRENT_SAM3_DEVICE, _CURRENT_SAM3_MTIME, _CURRENT_SAM3_SIZE, _CURRENT_SAM3_CROP_BOUNDS, _CURRENT_SAM2_CACHE
             with _LOADED_MODELS_LOCK:
                 if model_type == "all":
                     print("TrixLoader: Unloading all models completely...")
@@ -2729,6 +2876,10 @@ async def api_unload_model(request):
                     _CURRENT_SAM3_STATE = None
                     _CURRENT_SAM3_IMAGE = None
                     _CURRENT_SAM3_DEVICE = None
+                    _CURRENT_SAM3_MTIME = 0.0
+                    _CURRENT_SAM3_SIZE = 0
+                    _CURRENT_SAM3_CROP_BOUNDS = None
+                    _CURRENT_SAM2_CACHE.clear()
                 elif model_type == "sam":
                     print("TrixLoader: Unloading SAM models...")
                     for key in list(_LOADED_MODELS.keys()):
@@ -2737,6 +2888,10 @@ async def api_unload_model(request):
                     _CURRENT_SAM3_STATE = None
                     _CURRENT_SAM3_IMAGE = None
                     _CURRENT_SAM3_DEVICE = None
+                    _CURRENT_SAM3_MTIME = 0.0
+                    _CURRENT_SAM3_SIZE = 0
+                    _CURRENT_SAM3_CROP_BOUNDS = None
+                    _CURRENT_SAM2_CACHE.clear()
                 elif model_type == "bg":
                     print("TrixLoader: Unloading background removal models...")
                     for key in list(_LOADED_MODELS.keys()):
