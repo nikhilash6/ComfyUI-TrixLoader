@@ -1,10 +1,5 @@
 import { app } from '../../../scripts/app.js';
 
-const TRIX_AIO_SUBFOLDER = "aio_input";
-const CPO_ACCENT = "#33789a";
-const CPO_ACCENT_HOVER = "#3f8eb4";
-const CPO_BUTTON_BG = "#2a2a2f";
-const CPO_BUTTON_HOVER = "#333a45";
 const getCleanOrigBaseName = (src) => {
     if (!src) return "image";
     let filename = "";
@@ -23,12 +18,14 @@ const getCleanOrigBaseName = (src) => {
     basename = basename.replace(/[^a-zA-Z0-9_-]/g, "_");
     return basename || "image";
 };
-const trixCropFilename = (node, version) => {
-    const origBase = getCleanOrigBaseName(node.imgTagRef.src);
-    const uWgt = node.widgets ? node.widgets.find(w => w.name === "trix_uuid") : null;
-    const idToUse = uWgt && uWgt.value ? uWgt.value : node.id;
-    return `${origBase}_pasted_${idToUse}_${version}.png`;
-};
+
+const TRIX_AIO_SUBFOLDER = "aio_input";
+const CPO_ACCENT = "#33789a";
+const CPO_ACCENT_HOVER = "#3f8eb4";
+const CPO_BUTTON_BG = "#2a2a2f";
+const CPO_BUTTON_HOVER = "#333a45";
+const trixCropSafeId = (value) => String(value ?? "node").replace(/[^a-zA-Z0-9_-]+/g, "_") || "node";
+const trixCropFilename = (nodeId, version) => `trix_edited_${trixCropSafeId(nodeId)}_${version}.png`;
 const applyCpoButtonHover = (btn, isActive = () => false, base = CPO_BUTTON_BG, hover = CPO_BUTTON_HOVER) => {
     btn.onmouseenter = () => {
         if (!isActive()) {
@@ -267,7 +264,7 @@ function ensureTooltipStyles() {
     }
 }
 
-export function openTrixCropEditor(node, cropWidget) {
+export function openTrixCropBox(node, imgElement, savedMaskCanvas) {
     const abortCtrl = new AbortController();
     let camera = { x: 0, y: 0, zoom: 1 };
     let baseFitScale = 1;
@@ -277,30 +274,56 @@ export function openTrixCropEditor(node, cropWidget) {
     let isDragging = false; let dragHandle = null; 
     let startMx = 0, startMy = 0; let startCrop = null; let isPanning = false;
     let updateRecenterBtnText = null;
-    if (!node.imgTagRef || !node.imgTagRef.naturalWidth) {
+    if (!imgElement || !imgElement.naturalWidth) {
         alert("Please load an image first!");
         return;
     }
 
     const origImgObj = new Image();
     origImgObj.crossOrigin = "Anonymous";
-    origImgObj.src = node.imgTagRef.src;
+    let opaqueSrc = imgElement.src;
+    if (opaqueSrc && !opaqueSrc.startsWith("data:") && !opaqueSrc.startsWith("blob:")) {
+        try {
+            const url = new URL(opaqueSrc, window.location.origin);
+            url.searchParams.set("channel", "rgb");
+            opaqueSrc = url.toString();
+        } catch(e) {}
+    }
+    origImgObj.src = opaqueSrc;
 
-    let origW = node.imgTagRef.naturalWidth;
-    let origH = node.imgTagRef.naturalHeight;
+    let origW = imgElement.naturalWidth;
+    let origH = imgElement.naturalHeight;
 
     let oldCropX = 0;
     let oldCropY = 0;
     
+    const cropWidget = node.widgets ? node.widgets.find(w => w && w.name === "crop_data") : null;
+    let opaqueImgCanvas = null;
+
+    const getOpaqueCanvas = (img) => {
+        const cvs = document.createElement("canvas");
+        cvs.width = img.naturalWidth || img.width;
+        cvs.height = img.naturalHeight || img.height;
+        const ctx = cvs.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        try {
+            const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
+            for (let i = 0; i < imgData.data.length; i += 4) {
+                imgData.data[i + 3] = 255;
+            }
+            ctx.putImageData(imgData, 0, 0);
+        } catch(e) {
+            console.error("Failed to make image opaque:", e);
+        }
+        return cvs;
+    };
+
     let origImageData = null;
     const initOrigImageData = () => {
         if (!origW || !origH) return;
-        const cvs = document.createElement("canvas");
-        cvs.width = origW;
-        cvs.height = origH;
-        const ctx = cvs.getContext("2d", { willReadFrequently: true });
-        ctx.drawImage(origImgObj, 0, 0);
+        opaqueImgCanvas = getOpaqueCanvas(origImgObj);
         try {
+            const ctx = opaqueImgCanvas.getContext("2d");
             origImageData = ctx.getImageData(0, 0, origW, origH);
         } catch (e) {
             console.warn("Could not get image data for smart snapping (possible CORS issue):", e);
@@ -640,6 +663,7 @@ export function openTrixCropEditor(node, cropWidget) {
             }
             
             resetAlignmentToFree();
+            origImageData = null;
             resizeCanvas(true);
         };
         origImgObj.src = tempCanvas.toDataURL("image/png");
@@ -908,7 +932,7 @@ export function openTrixCropEditor(node, cropWidget) {
 
     const featherRow = document.createElement("div");
     featherRow.style.cssText = `display: ${useOutpaint ? "flex" : "none"}; align-items: center; justify-content: space-between; background: #2a2a2a; padding: 6px 10px; margin-top: 4px; border-radius: 6px; border: 1px solid #444; gap: 8px;`;
-    
+
     const featherLabel = document.createElement("span");
     featherLabel.innerText = "Feathering";
     featherLabel.style.cssText = "color: #aaa; font-size: 11px; white-space: nowrap;";
@@ -1157,7 +1181,10 @@ export function openTrixCropEditor(node, cropWidget) {
         saveBtn.innerText = "Saving...";
         
         setTimeout(async () => {
-            const imgWidget = node.widgets ? node.widgets.find(w => w.name === "image") : null;
+            const origBase = getCleanOrigBaseName(imgElement.src);
+            const uWgt = node.widgets ? node.widgets.find(w => w.name === "trix_uuid") : null;
+            const idToUse = uWgt && uWgt.value ? uWgt.value : node.id;
+            const imgWidget = node.widgets ? node.widgets.find(w => w && (w.name === "image" || w.name === "image_path")) : null;
             let nextVersion = (node._trix_image_version || 0) + 1;
             if (imgWidget && imgWidget.value) {
                 const match = imgWidget.value.match(/_(\d+)\.[a-zA-Z0-9]+$/);
@@ -1168,26 +1195,34 @@ export function openTrixCropEditor(node, cropWidget) {
                     }
                 }
             }
-            const filename = trixCropFilename(node, nextVersion);
-            node.properties = node.properties || {};
-            node.properties.trix_crop_color = cropData.color;
+            const filename = `${origBase}_pasted_${idToUse}_${nextVersion}.png`;
             
             cropData.x = Math.round(cropData.x); cropData.y = Math.round(cropData.y);
             cropData.w = Math.round(cropData.w); cropData.h = Math.round(cropData.h);
             
+            // 1. Create a canvas for the cropped/padded image (fully opaque)
             const tCanvas = document.createElement("canvas");
             tCanvas.width = cropData.w; tCanvas.height = cropData.h;
             const tCtx = tCanvas.getContext("2d");
             tCtx.fillStyle = cropData.color;
             tCtx.fillRect(0, 0, cropData.w, cropData.h);
-            tCtx.drawImage(origImgObj, -cropData.x, -cropData.y);
-
-            const widgets = node.widgets ? node.widgets.reduce((acc, w) => ({...acc, [w.name]: w}), {}) : {};
+            
+            // Draw clean base image (opaque)
+            const cleanCvs = getOpaqueCanvas(origImgObj);
+            tCtx.drawImage(cleanCvs, -cropData.x, -cropData.y);
+            
+            // 2. Crop the mask canvas in the exact same way
+            const mCvs = document.createElement("canvas");
+            mCvs.width = cropData.w; mCvs.height = cropData.h;
+            const mCtx = mCvs.getContext("2d");
+            
+            // Fill with mask:
+            // If useOutpaint is true, we mask the padded areas (white).
+            // If useOutpaint is false, we do NOT mask the padded areas (black).
+            mCtx.fillStyle = useOutpaint ? "white" : "black";
+            mCtx.fillRect(0, 0, cropData.w, cropData.h);
+            
             if (useOutpaint) {
-                const mCvs = document.createElement("canvas");
-                mCvs.width = cropData.w; mCvs.height = cropData.h;
-                const mCtx = mCvs.getContext("2d");
-                
                 let padLeft = -cropData.x;
                 let padTop = -cropData.y;
                 let padRight = cropData.w - origW + cropData.x;
@@ -1249,245 +1284,122 @@ export function openTrixCropEditor(node, cropWidget) {
                     blurredCtx.getImageData(0, 0, 1, 1);
                 } catch (e) {}
                 
-                const hex = (node.maskColor || "#ff0000").replace("#", "");
-                const r = parseInt(hex.substring(0, 2), 16) || 255;
-                const g = parseInt(hex.substring(2, 4), 16) || 0;
-                const b = parseInt(hex.substring(4, 6), 16) || 0;
-                
-                const hData = blurredCtx.getImageData(0, 0, cropData.w, cropData.h).data;
-                const mImgData = mCtx.createImageData(cropData.w, cropData.h);
-                const mData = mImgData.data;
-                for (let i = 0; i < mData.length; i += 4) {
-                    mData[i] = r;
-                    mData[i+1] = g;
-                    mData[i+2] = b;
-                    mData[i+3] = hData[i]; // Alpha channel matches grayscale mask value
-                }
-                mCtx.putImageData(mImgData, 0, 0);
-
-                // Extract existing mask and decontaminated image sources
-                let originalMaskData = widgets.mask_data?.value || "";
-                let originalMaskSrc = "";
-                let originalDecontSrc = null;
-                if (originalMaskData) {
-                    if (originalMaskData.startsWith("{")) {
-                        try {
-                            const parsed = JSON.parse(originalMaskData);
-                            originalMaskSrc = parsed.mask || "";
-                            originalDecontSrc = parsed.decont_image || null;
-                        } catch(e) {
-                            originalMaskSrc = originalMaskData;
-                        }
-                    } else {
-                        originalMaskSrc = originalMaskData;
-                    }
-                }
-                
-                let maskSrcToAdapt = null;
-                if (node._openedFromMaskEditor && node._maskEditorBeforeOutpaint) {
-                    maskSrcToAdapt = node._maskEditorBeforeOutpaint;
-                } else if (originalMaskSrc) {
-                    maskSrcToAdapt = originalMaskSrc;
-                }
-
-                let finalMaskB64 = null;
-                if (maskSrcToAdapt) {
-                    const oldMaskImg = new Image();
-                    await new Promise((resolve) => {
-                        oldMaskImg.onload = resolve;
-                        oldMaskImg.onerror = resolve;
-                        oldMaskImg.src = maskSrcToAdapt;
-                    });
-                    let maskPadLeft = oldCropX - cropData.x;
-                    let maskPadTop = oldCropY - cropData.y;
-                    mCtx.drawImage(oldMaskImg, maskPadLeft, maskPadTop);
-                }
-                try { mCtx.getImageData(0, 0, 1, 1); } catch (e) {}
-                finalMaskB64 = mCvs.toDataURL("image/png");
-
-                let finalDecontVal = null;
-                if (originalDecontSrc) {
-                    const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
-                    finalDecontVal = isAio ? `${TRIX_AIO_SUBFOLDER}/${filename}` : filename;
-                }
-
-                if (finalMaskB64) {
-                    if (finalDecontVal) {
-                        widgets.mask_data.value = JSON.stringify({
-                            mask: finalMaskB64,
-                            decont_image: finalDecontVal
-                        });
-                    } else {
-                        widgets.mask_data.value = finalMaskB64;
-                    }
-                    if (widgets.mode) widgets.mode.value = "Mask";
-                }
+                mCtx.drawImage(blurredCvs, 0, 0);
             } else {
-                // Adapt existing mask to the new crop/pad size when not outpainting
-                let originalMaskData = widgets.mask_data?.value || "";
-                let originalMaskSrc = "";
-                let originalDecontSrc = null;
-                if (originalMaskData) {
-                    if (originalMaskData.startsWith("{")) {
-                        try {
-                            const parsed = JSON.parse(originalMaskData);
-                            originalMaskSrc = parsed.mask || "";
-                            originalDecontSrc = parsed.decont_image || null;
-                        } catch(e) {
-                            originalMaskSrc = originalMaskData;
-                        }
-                    } else {
-                        originalMaskSrc = originalMaskData;
-                    }
-                }
-                
-                let maskSrcToAdapt = null;
-                if (node._openedFromMaskEditor && node._maskEditorBeforeOutpaint) {
-                    maskSrcToAdapt = node._maskEditorBeforeOutpaint;
-                } else if (originalMaskSrc) {
-                    maskSrcToAdapt = originalMaskSrc;
-                }
-
-                let padLeft = oldCropX - cropData.x;
-                let padTop = oldCropY - cropData.y;
-                let finalMaskB64 = null;
-
-                if (maskSrcToAdapt) {
-                    const mCvs = document.createElement("canvas");
-                    mCvs.width = cropData.w; mCvs.height = cropData.h;
-                    const mCtx = mCvs.getContext("2d");
-                    
-                    const oldMaskImg = new Image();
-                    await new Promise((resolve) => {
-                        oldMaskImg.onload = resolve;
-                        oldMaskImg.onerror = resolve;
-                        oldMaskImg.src = maskSrcToAdapt;
-                    });
-                    mCtx.drawImage(oldMaskImg, padLeft, padTop);
-                    try { mCtx.getImageData(0, 0, 1, 1); } catch (e) {}
-                    finalMaskB64 = mCvs.toDataURL("image/png");
-                }
-
-                let finalDecontVal = null;
-                if (originalDecontSrc) {
-                    const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
-                    finalDecontVal = isAio ? `${TRIX_AIO_SUBFOLDER}/${filename}` : filename;
-                }
-
-                if (finalMaskB64) {
-                    if (finalDecontVal) {
-                        widgets.mask_data.value = JSON.stringify({
-                            mask: finalMaskB64,
-                            decont_image: finalDecontVal
-                        });
-                    } else {
-                        widgets.mask_data.value = finalMaskB64;
-                    }
-                } else {
-                    if (widgets.mask_data) widgets.mask_data.value = "";
-                }
+                // Clear the original image bounding box (unmasked, black)
+                mCtx.fillStyle = "black";
+                mCtx.fillRect(-cropData.x, -cropData.y, origW, origH);
             }
-
-            node._clearHistoryOnLoad = true;
-
-            const openedFromMask = node._openedFromMaskEditor;
-            node._openedFromMaskEditor = false;
-
-            const isWired = (() => {
-                if (!node || !node.inputs) return false;
-                const inp = node.inputs.find(slot => slot && slot.name === "in_image");
-                if (!inp || inp.link === null || inp.link === undefined) return false;
-                if (typeof app === "undefined" || !app.graph || !app.graph.links) return false;
-                const linkInfo = app.graph.links[inp.link];
-                return !!(linkInfo && linkInfo.target_id === node.id && node.inputs[linkInfo.target_slot] === inp);
-            })();
-
-            if (!isWired && widgets.image) {
-                if (widgets.image.value && !widgets.image.value.includes("aio_crop_") && !widgets.image.value.includes("trix_edited_")) {
-                    node._originalImageForCrop = widgets.image.value;
-                }
+            
+            // Draw the saved mask on the cropped mask canvas using screen mode so black pixels don't overwrite the blurred outpaint edges
+            if (savedMaskCanvas) {
+                mCtx.globalCompositeOperation = "screen";
+                mCtx.drawImage(savedMaskCanvas, -cropData.x, -cropData.y);
+                mCtx.globalCompositeOperation = "source-over";
             }
-
-            tCanvas.toBlob(async (blob) => {
-                if (!blob) {
-                    console.error("Failed to create blob for saving");
+            
+            // 3. Upload both blobs using our new custom API /trix/save_image_with_mask
+            tCanvas.toBlob((imgBlob) => {
+                if (!imgBlob) {
+                    console.error("Failed to create image blob");
                     saveBtn.disabled = false;
                     saveBtn.innerText = "Save to Node";
                     return;
                 }
                 
+                // Force a synchronous readback/GPU render flush so that blur filter is guaranteed to be applied
                 try {
-                    const file = new File([blob], filename, { type: "image/png" });
-                    const body = new FormData();
-                    body.append("image", file, filename);
-                    body.append("filename", filename);
-                    body.append("type", "input");
-                    const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
-                    body.append("subfolder", isAio ? TRIX_AIO_SUBFOLDER : "");
-                    body.append("overwrite", "true");
-                    const saveEveryStep = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStep", false);
-                    const saveEveryStepPath = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStepPath", "input/aio_input");
-                    body.append("save_every_step", saveEveryStep ? "true" : "false");
-                    body.append("save_every_step_path", saveEveryStepPath);
-                    
-                    const uploadResp = await fetch("/trix/save_image_with_mask", { method: "POST", body: body });
-                    if (uploadResp.status === 200) {
-                        const uploadData = await uploadResp.json();
-                        const fullPath = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
-                        
-                        node._trix_image_version = nextVersion;
-                        const imgWidget = node.widgets.find(w => w.name === "image");
-                        if (imgWidget) {
-                            node._isChangingImage = true;
-                            if (imgWidget.options && Array.isArray(imgWidget.options.values) && !imgWidget.options.values.includes(fullPath)) {
-                                imgWidget.options.values.unshift(fullPath);
-                            }
-                            imgWidget.value = fullPath;
-                            if (imgWidget.callback) imgWidget.callback(fullPath);
-                        }
-
-                        
-                        if (cropWidget) {
-                            if (isWired) {
-                                cropWidget.value = JSON.stringify(cropData);
-                            } else {
-                                let originalParsed = {};
-                                try {
-                                    if (cropWidget.value) {
-                                        originalParsed = JSON.parse(cropWidget.value);
-                                    }
-                                } catch(e) {}
-                                cropWidget.value = JSON.stringify({
-                                    ...originalParsed,
-                                    color: cropData.color
-                                });
-                            }
-                        }
-                        
-                        if (node.syncHTMLRef) node.syncHTMLRef();
-                        if (node.updateUIRef) node.updateUIRef();
-                        if (app.graph) app.graph.setDirtyCanvas(true, true);
-                        closeEditor();
-
-                        // Notify downstream nodes to pull the updated preview/image in real-time
-                        setTimeout(() => {
-                            if (app.graph) {
-                                app.graph._nodes.forEach(n => {
-                                    if (typeof n.pullLivePreviewRef === "function") {
-                                        n.pullLivePreviewRef();
-                                    }
-                                });
-                            }
-                        }, 150);
-                    } else {
-                        throw new Error(`Upload failed: ${uploadResp.status}`);
-                    }
+                    mCtx.getImageData(0, 0, 1, 1);
                 } catch (e) {
-                    console.error("Save to Node upload failed", e);
-                    alert("Failed to save image to node: " + e);
-                    saveBtn.disabled = false;
-                    saveBtn.innerText = "Save to Node";
+                    console.error("GPU sync error:", e);
                 }
+                
+                mCvs.toBlob(async (maskBlob) => {
+                    if (!maskBlob) {
+                        console.error("Failed to create mask blob");
+                        saveBtn.disabled = false;
+                        saveBtn.innerText = "Save to Node";
+                        return;
+                    }
+                    try {
+                        const imgFile = new File([imgBlob], filename, { type: "image/png" });
+                        const maskFile = new File([maskBlob], "mask.png", { type: "image/png" });
+                        const body = new FormData();
+                        body.append("image", imgFile, filename);
+                        body.append("mask", maskFile, "mask.png");
+                        body.append("filename", filename);
+                        body.append("type", "input");
+                        const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
+                        body.append("subfolder", isAio ? TRIX_AIO_SUBFOLDER : "");
+                        body.append("overwrite", "true");
+                        const saveEveryStep = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStep", false);
+                        const saveEveryStepPath = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStepPath", "input/aio_input");
+                        body.append("save_every_step", saveEveryStep ? "true" : "false");
+                        body.append("save_every_step_path", saveEveryStepPath);
+                        
+                        const uploadResp = await fetch("/trix/save_image_with_mask", { method: "POST", body: body });
+                        if (uploadResp.status === 200) {
+                            const uploadData = await uploadResp.json();
+                            const fullPath = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
+                            
+                            node._trix_image_version = nextVersion;
+                            const imgWidget = node.widgets ? node.widgets.find(w => w && (w.name === "image" || w.name === "image_path")) : null;
+                            if (imgWidget) {
+                                node._isChangingImage = true;
+                                if (imgWidget.options && Array.isArray(imgWidget.options.values) && !imgWidget.options.values.includes(fullPath)) {
+                                    imgWidget.options.values.unshift(fullPath);
+                                }
+                                imgWidget.value = fullPath;
+                                if (imgWidget.callback) imgWidget.callback(fullPath);
+                            }
+                            
+                            const widgets = node.widgets ? node.widgets.reduce((acc, w) => ({...acc, [w.name]: w}), {}) : {};
+                            if (widgets.keep_proportion) {
+                                widgets.keep_proportion.value = useOutpaint ? "pad_for_outpainting" : "pad";
+                                if (widgets.keep_proportion.callback) widgets.keep_proportion.callback(widgets.keep_proportion.value);
+                            }
+                            if (widgets.width) {
+                                widgets.width.value = cropData.w;
+                                if (widgets.width.callback) widgets.width.callback(cropData.w);
+                            }
+                            if (widgets.height) {
+                                widgets.height.value = cropData.h;
+                                if (widgets.height.callback) widgets.height.callback(cropData.h);
+                            }
+                            if (useOutpaint) {
+                                if (widgets.enable_resize) {
+                                    widgets.enable_resize.value = true;
+                                    if (widgets.enable_resize.callback) widgets.enable_resize.callback(true);
+                                }
+                                if (widgets.feathering) {
+                                    widgets.feathering.value = feathering;
+                                    if (widgets.feathering.callback) widgets.feathering.callback(feathering);
+                                }
+                            } else {
+                                if (widgets.enable_resize) {
+                                    widgets.enable_resize.value = false;
+                                    if (widgets.enable_resize.callback) widgets.enable_resize.callback(false);
+                                }
+                                if (widgets.feathering) {
+                                    widgets.feathering.value = 0;
+                                    if (widgets.feathering.callback) widgets.feathering.callback(0);
+                                }
+                            }
+                            
+                            if (node.syncHTMLRef) node.syncHTMLRef();
+                            if (node.updateUIRef) node.updateUIRef();
+                            if (app.graph) app.graph.setDirtyCanvas(true, true);
+                            closeEditor();
+                        } else {
+                            throw new Error(`Upload failed: ${uploadResp.status}`);
+                        }
+                    } catch (e) {
+                        console.error("Save to Node upload failed", e);
+                        alert("Failed to save image to node: " + e);
+                        saveBtn.disabled = false;
+                        saveBtn.innerText = "Save to Node";
+                    }
+                }, "image/png");
             }, "image/png");
         }, 50);
     };
@@ -1564,7 +1476,7 @@ export function openTrixCropEditor(node, cropWidget) {
 
         ctx.save();
         ctx.globalAlpha = 0.3;
-        ctx.drawImage(origImgObj, imgScreenX, imgScreenY, imgScreenW, imgScreenH);
+        ctx.drawImage(opaqueImgCanvas || origImgObj, imgScreenX, imgScreenY, imgScreenW, imgScreenH);
         ctx.restore();
 
         if (camera.zoom >= 8.0) {
@@ -1596,7 +1508,7 @@ export function openTrixCropEditor(node, cropWidget) {
         ctx.beginPath();
         ctx.rect(cropScreenX, cropScreenY, cropScreenW, cropScreenH);
         ctx.clip();
-        ctx.drawImage(origImgObj, imgScreenX, imgScreenY, imgScreenW, imgScreenH);
+        ctx.drawImage(opaqueImgCanvas || origImgObj, imgScreenX, imgScreenY, imgScreenW, imgScreenH);
         ctx.restore();
 
         ctx.save();

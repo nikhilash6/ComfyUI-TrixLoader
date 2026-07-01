@@ -4,3 +4,5 @@ __pycache__/
 .idea/
 .vscode/
 *.tmp
+ben2/
+comfyui-easy-sam3/

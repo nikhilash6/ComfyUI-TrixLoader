@@ -1,4 +1,5 @@
-﻿from .trix_loader_nodes import TrixLoadImageAIO
+from .trix_loader_nodes import TrixLoadImageAIO
+from .trix_toolbox import *
 
 NODE_CLASS_MAPPINGS = {
     "TrixLoadImageAIO": TrixLoadImageAIO

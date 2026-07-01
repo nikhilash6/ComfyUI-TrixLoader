@@ -17,6 +17,25 @@ function recolorCanvas(canvas, newColor) {
     ctx.drawImage(tempCvs, 0, 0);
 }
 
+const getCleanOrigBaseName = (src) => {
+    if (!src) return "image";
+    let filename = "";
+    try {
+        const url = new URL(src, window.location.origin);
+        filename = url.searchParams.get("filename") || "";
+    } catch(e) {
+        filename = src;
+    }
+    let basename = filename.split('/').pop().split('\\').pop();
+    let dotIdx = basename.lastIndexOf('.');
+    if (dotIdx !== -1) basename = basename.substring(0, dotIdx);
+    basename = basename.replace(/_(edited|masked|pasted|crop|cutout|camera_raw_HQ)_[a-zA-Z0-9_-]+_\d+/g, "");
+    basename = basename.replace(/_(edited|masked|pasted|crop|cutout|camera_raw_HQ)_\d+/g, "");
+    basename = basename.replace(/^(trix_crop_|trix_edited_|trix_camera_raw_HQ_|trix_cutout_|masked_)/g, "");
+    basename = basename.replace(/[^a-zA-Z0-9_-]/g, "_");
+    return basename || "image";
+};
+
 const TRIX_ACCENT = "#33789a";
 const TRIX_ACCENT_HOVER = "#3f8eb4";
 const TRIX_BUTTON_BG = "#2a2a2f";
@@ -138,17 +157,17 @@ function ensureTooltipStyles() {
     }
 }
 
-export function openTrixMaskEditor(node) {
+export function openTrixMaskBox(node, imgElement, savedMaskCanvas) {
     node._isUIBlocked = false;
     
-    if (!node.imgTagRef || !node.imgTagRef.naturalWidth) {
+    if (!imgElement || !imgElement.naturalWidth) {
         alert("Please load an image first!");
         return;
     }
 
     const getSAMImageParam = () => {
-        const src = node.imgTagRef.src;
-        if (!src) return node.widgets.find(w => w.name === "image")?.value || "";
+        const src = imgElement.src;
+        if (!src) return node.widgets?.find(w => w && (w.name === "image" || w.name === "image_path"))?.value || "";
         
         try {
             const url = new URL(src, window.location.origin);
@@ -162,10 +181,10 @@ export function openTrixMaskEditor(node) {
                 return `${baseName} [input]`;
             }
         } catch (e) {
-            console.error("Failed to parse imgTagRef.src URL", e);
+            console.error("Failed to parse imgElement.src URL", e);
         }
         
-        return node.widgets.find(w => w.name === "image")?.value || "";
+        return node.widgets?.find(w => w && (w.name === "image" || w.name === "image_path"))?.value || "";
     };
 
     const abortCtrl = new AbortController();
@@ -262,29 +281,11 @@ export function openTrixMaskEditor(node) {
     let baseFitScale = 1;
 
     const TRIX_AIO_SUBFOLDER = "aio_input";
-    const getCleanOrigBaseName = (src) => {
-        if (!src) return "image";
-        let filename = "";
-        try {
-            const url = new URL(src, window.location.origin);
-            filename = url.searchParams.get("filename") || "";
-        } catch(e) {
-            filename = src;
-        }
-        let basename = filename.split('/').pop().split('\\').pop();
-        let dotIdx = basename.lastIndexOf('.');
-        if (dotIdx !== -1) basename = basename.substring(0, dotIdx);
-        basename = basename.replace(/_(edited|masked|pasted|crop|cutout|camera_raw_HQ)_[a-zA-Z0-9_-]+_\d+/g, "");
-        basename = basename.replace(/_(edited|masked|pasted|crop|cutout|camera_raw_HQ)_\d+/g, "");
-        basename = basename.replace(/^(trix_crop_|trix_edited_|trix_camera_raw_HQ_|trix_cutout_|masked_)/g, "");
-        basename = basename.replace(/[^a-zA-Z0-9_-]/g, "_");
-        return basename || "image";
-    };
+    const trixCropSafeId = (value) => String(value ?? "node").replace(/[^a-zA-Z0-9_-]+/g, "_") || "node";
     const trixEditedFilename = (nodeId, version) => {
         const uWgt = node.widgets ? node.widgets.find(w => w.name === "trix_uuid") : null;
         const idToUse = uWgt && uWgt.value ? uWgt.value : nodeId;
-        const origBase = getCleanOrigBaseName(imgElement.src);
-        return `${origBase}_edited_${idToUse}_${version}.png`;
+        return `trix_edited_${trixCropSafeId(idToUse)}_${version}.png`;
     };
 
     const clearSAMHover = () => {
@@ -1333,12 +1334,7 @@ export function openTrixMaskEditor(node) {
 
 
 
-    // ==========================================
-    // SIDEBAR: OUTPAINT INTEGRATION
-    // ==========================================
-    sidebar.appendChild(createSidebarLabel("Image Outpaint"));
-    const outpaintBtn = createSidebarButton("Pad Image for Outpaint", false);
-    sidebar.appendChild(outpaintBtn);
+
 
     // Spacer
     const flexSpacer = document.createElement("div");
@@ -1517,19 +1513,45 @@ export function openTrixMaskEditor(node) {
     // IMAGE AND DOUBLE CANVASES SETUP
     // ==========================================
     const origImgObj = new Image();
+    const opaqueImgCvs = document.createElement("canvas");
+    const opaqueImgCtx = opaqueImgCvs.getContext("2d");
     origImgObj.crossOrigin = "Anonymous";
     origImgObj.onload = () => {
+        opaqueImgCvs.width = origImgObj.naturalWidth;
+        opaqueImgCvs.height = origImgObj.naturalHeight;
+        opaqueImgCtx.drawImage(origImgObj, 0, 0);
+        try {
+            const imgData = opaqueImgCtx.getImageData(0, 0, opaqueImgCvs.width, opaqueImgCvs.height);
+            for (let i = 0; i < imgData.data.length; i += 4) {
+                imgData.data[i + 3] = 255;
+            }
+            opaqueImgCtx.putImageData(imgData, 0, 0);
+        } catch(e) {
+            console.error("Failed to make image opaque in editor:", e);
+        }
         resizeCanvas();
         requestDraw();
     };
-    origImgObj.src = node.imgTagRef.src;
+    let opaqueSrc = imgElement.src;
+    if (opaqueSrc && !opaqueSrc.startsWith("data:") && !opaqueSrc.startsWith("blob:")) {
+        try {
+            const url = new URL(opaqueSrc, window.location.origin);
+            url.searchParams.set("channel", "rgb");
+            opaqueSrc = url.toString();
+        } catch(e) {}
+    }
+    origImgObj.src = opaqueSrc;
 
-    let imgW = node.imgTagRef.naturalWidth;
-    let imgH = node.imgTagRef.naturalHeight;
+    let imgW = imgElement.naturalWidth;
+    let imgH = imgElement.naturalHeight;
 
     const originalMaskBackupCanvas = document.createElement("canvas");
     const backupCtx = originalMaskBackupCanvas.getContext("2d");
-    if (node.maskCanvasRef) {
+    if (savedMaskCanvas) {
+        originalMaskBackupCanvas.width = savedMaskCanvas.width;
+        originalMaskBackupCanvas.height = savedMaskCanvas.height;
+        backupCtx.drawImage(savedMaskCanvas, 0, 0);
+    } else if (node.maskCanvasRef) {
         originalMaskBackupCanvas.width = node.maskCanvasRef.width;
         originalMaskBackupCanvas.height = node.maskCanvasRef.height;
         backupCtx.drawImage(node.maskCanvasRef, 0, 0);
@@ -1611,8 +1633,12 @@ export function openTrixMaskEditor(node) {
         return tempCvs;
     };
 
-    // Populate initial mask onto rawMaskCanvas directly from node.maskCanvasRef synchronously (Synergy!)
-    if (node.maskCanvasRef && node.maskCanvasRef.width === imgW && node.maskCanvasRef.height === imgH) {
+    // Populate initial mask onto rawMaskCanvas directly from savedMaskCanvas or node.maskCanvasRef synchronously (Synergy!)
+    if (savedMaskCanvas) {
+        const alphaMask = convertGrayscaleToAlpha(savedMaskCanvas);
+        rawCtx.drawImage(alphaMask, 0, 0, imgW, imgH);
+        saveHistory();
+    } else if (node.maskCanvasRef && node.maskCanvasRef.width === imgW && node.maskCanvasRef.height === imgH) {
         rawCtx.drawImage(node.maskCanvasRef, 0, 0, imgW, imgH);
         saveHistory();
     } else if (originalMaskSrc) {
@@ -2507,7 +2533,7 @@ export function openTrixMaskEditor(node) {
         if (currentDecontImg && currentDecontImg.complete) {
             ctx.drawImage(currentDecontImg, 0, 0);
         } else {
-            ctx.drawImage(origImgObj, 0, 0);
+            ctx.drawImage(opaqueImgCvs, 0, 0);
         }
 
         // 2. Draw mask layer on top (with real-time grow/blur PREVIEW)
@@ -3667,25 +3693,7 @@ export function openTrixMaskEditor(node) {
         }
     };
 
-    // ==========================================
-    // OUTPAINT IMAGE INTEGRATION
-    // ==========================================
-    outpaintBtn.onclick = () => {
-        if (isDownloadingSAM || isDownloadingBG) {
-            alert("Please wait for the model download to complete. Do not close the editor or reload the page.");
-            return;
-        }
-        // Save current raw canvas data and properties to the node temporarily
-        node._maskEditorBeforeOutpaint = rawMaskCanvas.toDataURL("image/png");
-        node._openedFromMaskEditor = true;
 
-        // Close Mask Editor and trigger CPO Editor
-        closeEditor(true);
-        
-        const cropWidget = node.widgets.find(w => w.name === "crop_data");
-        // Open the Crop Editor with Outpaint mode forced to ON
-        openTrixCropEditor(node, cropWidget);
-    };
 
     // ==========================================
     // SAVE / CLOSE HANDLERS
@@ -3729,24 +3737,27 @@ export function openTrixMaskEditor(node) {
         showStatus("Saving mask...");
 
         try {
-            // 1. grow/blur already baked into rawMaskCanvas via Apply button — copy to tempCanvas
-            tempCtx.clearRect(0, 0, imgW, imgH);
-            tempCtx.drawImage(rawMaskCanvas, 0, 0);
-
-            // Save the resulting mask to mask_data widget
-            const maskDataVal = tempCanvas.toDataURL("image/png");
+            // 1. Create a fully opaque canvas (drawing decontaminated image or opaque reference)
+            const finalCanvas = document.createElement("canvas");
+            finalCanvas.width = imgW;
+            finalCanvas.height = imgH;
+            const finalCtx = finalCanvas.getContext("2d");
             
-            let decontVal = currentDecontImgB64;
-            const isWired = (() => {
-                if (!node || !node.inputs) return false;
-                const inp = node.inputs.find(slot => slot && slot.name === "in_image");
-                if (!inp || inp.link === null || inp.link === undefined) return false;
-                if (typeof app === "undefined" || !app.graph || !app.graph.links) return false;
-                const linkInfo = app.graph.links[inp.link];
-                return !!(linkInfo && linkInfo.target_id === node.id && node.inputs[linkInfo.target_slot] === inp);
-            })();
+            if (currentDecontImg && currentDecontImg.complete) {
+                finalCtx.drawImage(currentDecontImg, 0, 0);
+            } else {
+                finalCtx.drawImage(opaqueImgCvs, 0, 0);
+            }
             
-            const imgWidget = node.widgets ? node.widgets.find(w => w.name === "image") : null;
+            // 2. Generate blobs for both image and mask
+            const imgBlob = await new Promise(resolve => finalCanvas.toBlob(resolve, "image/png"));
+            const maskBlob = await new Promise(resolve => rawMaskCanvas.toBlob(resolve, "image/png"));
+            
+            if (!imgBlob || !maskBlob) {
+                throw new Error("Failed to create image or mask blob.");
+            }
+            const origBase = getCleanOrigBaseName(imgElement.src);
+            const imgWidget = node.widgets ? node.widgets.find(w => w && (w.name === "image" || w.name === "image_path")) : null;
             let nextVersion = (node._trix_image_version || 0) + 1;
             if (imgWidget && imgWidget.value) {
                 const match = imgWidget.value.match(/_(\d+)\.[a-zA-Z0-9]+$/);
@@ -3757,100 +3768,48 @@ export function openTrixMaskEditor(node) {
                     }
                 }
             }
-            if (!isWired && currentDecontImgB64 && currentDecontImgB64.startsWith("data:")) {
-                try {
-                    const decontBlob = await fetch(currentDecontImgB64).then(r => r.blob());
-                    const filename = trixEditedFilename(node.id, nextVersion);
-                    const file = new File([decontBlob], filename, { type: "image/png" });
-                    
-                    const formData = new FormData();
-                    formData.append("image", file, filename);
-                    formData.append("filename", filename);
-                    formData.append("type", "input");
-                    const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
-                    formData.append("subfolder", isAio ? TRIX_AIO_SUBFOLDER : "");
-                    formData.append("overwrite", "true");
-                    const saveEveryStep = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStep", false);
-                    const saveEveryStepPath = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStepPath", "input/aio_input");
-                    formData.append("save_every_step", saveEveryStep ? "true" : "false");
-                    formData.append("save_every_step_path", saveEveryStepPath);
-                    
-                    const uploadResp = await fetch("/trix/save_image_with_mask", { method: "POST", body: formData });
-                    if (uploadResp.ok) {
-                        const uploadJson = await uploadResp.json();
-                        const fullPath = uploadJson.subfolder ? `${uploadJson.subfolder}/${uploadJson.name}` : uploadJson.name;
-                        
-                        if (imgWidget) {
-                            if (imgWidget.options && Array.isArray(imgWidget.options.values) && !imgWidget.options.values.includes(fullPath)) {
-                                imgWidget.options.values.unshift(fullPath);
-                            }
-                            imgWidget.value = fullPath;
-                            if (imgWidget.callback) imgWidget.callback(fullPath);
-                        }
-                        decontVal = fullPath;
+            const uWgt = node.widgets ? node.widgets.find(w => w.name === "trix_uuid") : null;
+            const idToUse = uWgt && uWgt.value ? uWgt.value : node.id;
+            const filename = `${origBase}_masked_${idToUse}_${nextVersion}.png`;
+            const imgFile = new File([imgBlob], filename, { type: "image/png" });
+            const maskFile = new File([maskBlob], "mask.png", { type: "image/png" });
+            
+            const body = new FormData();
+            body.append("image", imgFile, filename);
+            body.append("mask", maskFile, "mask.png");
+            body.append("filename", filename);
+            body.append("type", "input");
+            const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
+            body.append("subfolder", isAio ? TRIX_AIO_SUBFOLDER : "");
+            body.append("overwrite", "true");
+            const saveEveryStep = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStep", false);
+            const saveEveryStepPath = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStepPath", "input/aio_input");
+            body.append("save_every_step", saveEveryStep ? "true" : "false");
+            body.append("save_every_step_path", saveEveryStepPath);
+            
+            const resp = await fetch("/trix/save_image_with_mask", { method: "POST", body: body });
+            if (resp.status === 200) {
+                const uploadData = await resp.json();
+                const finalName = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
+                
+                if (imgWidget) {
+                    if (imgWidget.options && Array.isArray(imgWidget.options.values) && !imgWidget.options.values.includes(finalName)) {
+                        imgWidget.options.values.unshift(finalName);
                     }
-                } catch (e) {
-                    console.error("Failed to upload color-decontaminated image:", e);
+                    imgWidget.value = finalName;
+                    if (imgWidget.callback) imgWidget.callback(finalName);
                 }
+                node._trix_image_version = nextVersion;
+                if (app.graph) app.graph.setDirtyCanvas(true, true);
+                closeEditor(true);
+            } else {
+                throw new Error(`Upload failed: ${resp.status}`);
             }
-
-            let saveVal = maskDataVal;
-            if (decontVal) {
-                saveVal = JSON.stringify({
-                    mask: maskDataVal,
-                    decont_image: decontVal
-                });
-            }
-            const widgets = node.widgets ? node.widgets.reduce((acc, w) => ({...acc, [w.name]: w}), {}) : {};
-            if (widgets.mask_data) {
-                widgets.mask_data.value = saveVal;
-            }
-
-            // Sync color and visual opacity back to the standard UI
-            node._colorIdx = colorIndex;
-            node.maskColor = maskColor;
-            node._visualOpacityStandard = node._visualOpacityEditor;
-            if (node.updateColorPickBgRef) node.updateColorPickBgRef();
-
-            // Sync brush size and hardness back to the node
-            node.brushSize = brushSize;
-            node.brushHardness = brushHardness;
-            if (node._sizeNum) {
-                node._sizeNum.value = brushSize;
-                const inlineSlider = node._sizeNum.parentNode ? node._sizeNum.parentNode.querySelector("input[type=range]") : null;
-                if (inlineSlider) inlineSlider.value = brushSize;
-            }
-            if (node._hardnessNum) {
-                node._hardnessNum.value = Math.round(brushHardness * 100);
-                const inlineSlider = node._hardnessNum.parentNode ? node._hardnessNum.parentNode.querySelector("input[type=range]") : null;
-                if (inlineSlider) inlineSlider.value = Math.round(brushHardness * 100);
-            }
-
-            // Force the inline canvas sizes to match the editor image bounds exactly
-            if (node.maskCanvasRef) {
-                node.maskCanvasRef.width = imgW;
-                node.maskCanvasRef.height = imgH;
-                if (node.alignCanvasRef) node.alignCanvasRef();
-            }
-
-            // Redraw node canvas and update UI (with safety checks for clean ComfyUI)
-            try {
-                if (node.syncMaskToCanvas) {
-                    await node.syncMaskToCanvas();
-                }
-            } catch (syncErr) {
-                console.warn("TrixLoader: syncMaskToCanvas failed (non-critical):", syncErr);
-            }
-            if (node.saveHistoryRef) node.saveHistoryRef();
-            node._trix_image_version = (typeof nextVersion !== "undefined") ? nextVersion : (node._trix_image_version || 0) + 1;
-            if (node.updateUIRef) node.updateUIRef();
-            if (node.updateCursorSizeRef) node.updateCursorSizeRef();
-            if (typeof app !== 'undefined' && app.graph) app.graph.setDirtyCanvas(true, true);
-
-            closeEditor(true);
         } catch (err) {
             console.error("Error saving mask:", err);
             alert("Error saving mask: " + err.message);
+            unlockUI();
+            hideStatus();
         } finally {
             hideStatus();
             unlockUI();
@@ -3859,8 +3818,7 @@ export function openTrixMaskEditor(node) {
 
     // Load initial size of editor
     setTimeout(() => {
-        if (origImgObj.complete) { resizeCanvas(); } 
-        else { origImgObj.onload = resizeCanvas; }
+        resizeCanvas();
     }, 20);
 
     // Check if there are any active downloads already running on the backend

@@ -55,8 +55,8 @@ class TrixLoadImageAIO:
         return {
             "required": {
                 "image": (sorted(files),),
-                "width": ("INT", {"default": 1024, "min": 16, "max": 8192}),
-                "height": ("INT", {"default": 1024, "min": 16, "max": 8192}),
+                "width": ("INT", {"default": 1024, "min": 16, "max": 16384}),
+                "height": ("INT", {"default": 1024, "min": 16, "max": 16384}),
                 "pad_left": ("INT", {"default": 0, "min": 0, "max": 16384, "step": 1}),
                 "pad_top": ("INT", {"default": 0, "min": 0, "max": 16384, "step": 1}),
                 "pad_right": ("INT", {"default": 0, "min": 0, "max": 16384, "step": 1}),
@@ -67,15 +67,16 @@ class TrixLoadImageAIO:
                 "scale_by": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 64.0, "step": 0.01}),
                 "condition": (["always", "downscale if bigger", "upscale if smaller", "if bigger area", "if smaller area"], {"default": "always"}),
                 "feathering": ("INT", {"default": 0, "min": 0, "max": 250, "step": 1}),
-                "divisible_by": ("INT", {"default": 2, "min": 1, "max": 256, "step": 1}),
+                "divisible_by": ("INT", {"default": 8, "min": 1, "max": 256, "step": 1}),
                 "enable_resize": ("BOOLEAN", {"default": False}),
-                "mode": (["Base", "Mask", "Resize"], {"default": "Base"}),
+                "mode": (["Preview", "Mask", "Filter", "Resize"], {"default": "Preview"}),
                 "mask_data": ("STRING", {"default": ""}),
                 "crop_data": ("STRING", {"default": "{}"}),
                 
                 # ==== Camera Raw Settings ====
                 "cr_enable": ("BOOLEAN", {"default": False}),
-                "cr_exp": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
+                "cr_offset": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
+                "cr_exp": ("INT", {"default": 0, "min": -200, "max": 200, "step": 1}),
                 "cr_cont": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
                 "cr_high": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
                 "cr_shad": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
@@ -83,21 +84,37 @@ class TrixLoadImageAIO:
                 "cr_black": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
                 "cr_temp": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
                 "cr_tint": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
+                "cr_vibrance": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
                 "cr_colorfulness": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
                 "cr_sat": ("INT", {"default": 0, "min": -100, "max": 100, "step": 1}),
-                "cr_tex": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
-                "cr_clar": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
+                "cr_tex": ("INT", {"default": 0, "min": -200, "max": 200, "step": 1}),
+                "cr_clar": ("INT", {"default": 0, "min": -200, "max": 200, "step": 1}),
                 "cr_dehz": ("INT", {"default": 0, "min": -150, "max": 150, "step": 1}),
-                "cr_grain": ("INT", {"default": 0, "min": 0, "max": 150, "step": 1}),
                 "cr_sharp": ("INT", {"default": 0, "min": 0, "max": 150, "step": 1}),
+                "cr_denoise": ("INT", {"default": 0, "min": 0, "max": 150, "step": 1}),
                 "cr_blur": ("INT", {"default": 0, "min": 0, "max": 150, "step": 1}),
+                "cr_surface_blur": ("INT", {"default": 0, "min": 0, "max": 200, "step": 1}),
+                "cr_grain": ("INT", {"default": 0, "min": 0, "max": 150, "step": 1}),
                 "cr_vignette": ("INT", {"default": 0, "min": 0, "max": 150, "step": 1}),
+                "cr_sketch_kernel_size": ("INT", {"default": 0, "min": 0, "max": 25, "step": 1}),
+                "cr_sketch_sigma": ("FLOAT", {"default": 1.4, "min": 0.1, "max": 5.0, "step": 0.05}),
+                "cr_sketch_k_sigma": ("FLOAT", {"default": 1.6, "min": 1.0, "max": 5.0, "step": 0.05}),
+                "cr_sketch_epsilon": ("FLOAT", {"default": -0.03, "min": -0.2, "max": 0.2, "step": 0.005}),
+                "cr_sketch_phi": ("FLOAT", {"default": 10.0, "min": 1.0, "max": 50.0, "step": 1.0}),
+                "cr_sketch_gamma": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.005}),
+                "cr_sketch_color": (["gray", "rgb"], {"default": "gray"}),
+                "cr_pixel_colors": ("INT", {"default": 128, "min": 2, "max": 256, "step": 1}),
+                "cr_pixel_dot_size": ("INT", {"default": 0, "min": 0, "max": 32, "step": 1}),
+                "cr_pixel_outline": ("INT", {"default": 0, "min": 0, "max": 9, "step": 1}),
+                "cr_pixel_smoothing": ("INT", {"default": 0, "min": 0, "max": 10, "step": 1}),
+                "cr_pixel_algo": (["kmeans", "dithering", "kmeans with dithering"], {"default": "kmeans"}),
                 
                 # ==== HSL Settings ====
                 "hsl_active": ("BOOLEAN", {"default": False}),
                 "hsl_data": ("STRING", {"default": "{}"}),
                 "curve_active": ("BOOLEAN", {"default": False}),
                 "curve_data": ("STRING", {"default": "{}"}),
+                "trix_uuid": ("STRING", {"default": ""}),
             },
             "optional": {
                 "in_image": ("IMAGE",),
@@ -110,22 +127,22 @@ class TrixLoadImageAIO:
 
     CATEGORY = "TrixLoader 🪬"
     DESCRIPTION = """TABS CONTROLS: 
-❂ COLOR GRADING [BASE]
-➥ Dbl-Click tab to open Camera Raw menu
-➥ Toggle "Enable Filter" to unlock settings
-➥ Click "Live Camera Raw" for visual adjustments
+❂ COLOR GRADING [FILTER]
+➥ Dbl-Click tab: Open full-screen Trix Camera Raw
+➥ Toggle "Enable Filter" to apply RAW, HSL, Curves, or effects during generation
+➥ Click "Live Camera Raw" for visual color adjustments
 
 ✎ MASKING [MASK]
-➥ Dbl-Click tab: Fullscreen Mode
-➥ Alt + RMB (Drag): Resize Brush & Hardness
-➥ Object Selector (SAM): LMB to add points, RMB + Drag to exclude
-➥ Mask Background: Automated AI background removal (with Alpha Matting)
+➥ Dbl-Click tab: Open full-screen Trix Mask Editor
+➥ Click "Open Advanced Mask Editor" for in-tab tools
+➥ Color Swapper Circle: Changes brush color & recolors existing mask pixels
+➥ Alt + RMB (Drag): Resize Brush size and Hardness on node canvas
 
 回 RESIZING & CROPPING [RESIZE] 
-➥ Toggle "Enable Resize" to unlock dimension settings
-➥ Click "Open CPO Editor" for visual cropping/padding
-➥ Crop Position: Click for interactive 5-direction grid
-➥ pad_for_outpainting: LMB drag-to-adjust padding on 4 sides (L, T, R, B)
+➥ Toggle "Enable Resize" to apply dimensions & outpainting during generation
+➥ Dbl-Click tab / Click "Open CPO Editor": Open full-screen Trix Crop/Pad/Outpaint
+➥ Crop Position: Click for interactive 5-direction alignment grid
+➥ Outpaint Feathering: Set edge blending radius
 
 ★ PRO TIP: Right-click the node to directly Copy/Paste Images and Masks!"""
 
@@ -140,6 +157,7 @@ class TrixLoadImageAIO:
 
     @staticmethod
     def rgb_to_hsl(rgb):
+        rgb = np.clip(rgb, 0.0, 1.0)
         r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
         maxc = np.max(rgb, axis=-1)
         minc = np.min(rgb, axis=-1)
@@ -155,20 +173,24 @@ class TrixLoadImageAIO:
         denom = np.where(l > 0.5, 2.0 - maxc - minc, maxc + minc)
         denom = np.where(denom == 0, 1.0, denom) 
         s[mask] = d[mask] / denom[mask]
+        s = np.clip(s, 0.0, 1.0)
         
         idx_r = mask & (maxc == r)
         idx_g = mask & (maxc == g) & (~idx_r)
         idx_b = mask & (maxc == b) & (~idx_r) & (~idx_g)
         
-        h[idx_r] = (g[idx_r] - b[idx_r]) / d[idx_r] + np.where(g[idx_r] < b[idx_r], 6.0, 0.0)
-        h[idx_g] = (b[idx_g] - r[idx_g]) / d[idx_g] + 2.0
-        h[idx_b] = (r[idx_b] - g[idx_b]) / d[idx_b] + 4.0
+        d_safe = np.where(d == 0, 1.0, d)
+        h[idx_r] = (g[idx_r] - b[idx_r]) / d_safe[idx_r] + np.where(g[idx_r] < b[idx_r], 6.0, 0.0)
+        h[idx_g] = (b[idx_g] - r[idx_g]) / d_safe[idx_g] + 2.0
+        h[idx_b] = (r[idx_b] - g[idx_b]) / d_safe[idx_b] + 4.0
         
         h = (h / 6.0) * 360.0
+        h = np.mod(h, 360.0)
         return np.stack([h, s, l], axis=-1)
 
     @staticmethod
     def hsl_to_rgb(hsl):
+        hsl = np.clip(hsl, [0.0, 0.0, 0.0], [360.0, 1.0, 1.0])
         h, s, l = hsl[..., 0] / 360.0, hsl[..., 1], hsl[..., 2]
         
         def hue_to_rgb(p, q, t):
@@ -194,7 +216,7 @@ class TrixLoadImageAIO:
         g = np.where(s == 0, l, hue_to_rgb(p, q, h))
         b = np.where(s == 0, l, hue_to_rgb(p, q, h - 1.0/3.0))
         
-        return np.stack([r, g, b], axis=-1)
+        return np.clip(np.stack([r, g, b], axis=-1), 0.0, 1.0)
 
     @staticmethod
     def build_curve_lut(points):
@@ -230,9 +252,55 @@ class TrixLoadImageAIO:
         if parsed_points[-1][0] < 255:
             parsed_points.append((255.0, parsed_points[-1][1]))
 
+        n = len(parsed_points)
+        if n == 2:
+            xs = np.array([p[0] for p in parsed_points], dtype=np.float32)
+            ys = np.array([p[1] for p in parsed_points], dtype=np.float32)
+            lut = np.interp(np.arange(256, dtype=np.float32), xs, ys)
+            return np.clip(lut, 0, 255).astype(np.uint8)
+
+        # Monotone Cubic Spline (Fritsch-Carlson algorithm) in Python
         xs = np.array([p[0] for p in parsed_points], dtype=np.float32)
         ys = np.array([p[1] for p in parsed_points], dtype=np.float32)
-        lut = np.interp(np.arange(256, dtype=np.float32), xs, ys)
+
+        dx = xs[1:] - xs[:-1]
+        dy = ys[1:] - ys[:-1]
+        ms = dy / np.where(dx == 0.0, 1.0, dx)
+
+        # Tangents
+        c1s = np.zeros(n, dtype=np.float32)
+        c1s[0] = ms[0]
+        for i in range(1, n - 1):
+            m = ms[i - 1]
+            next_m = ms[i]
+            if m * next_m <= 0.0:
+                c1s[i] = 0.0
+            else:
+                w1 = 2.0 * dx[i] + dx[i - 1]
+                w2 = dx[i] + 2.0 * dx[i - 1]
+                c1s[i] = (w1 + w2) / (w1 / m + w2 / next_m)
+        c1s[n - 1] = ms[n - 2]
+
+        # Coefficients for Hermite spline
+        c2s = np.zeros(n - 1, dtype=np.float32)
+        c3s = np.zeros(n - 1, dtype=np.float32)
+        for i in range(n - 1):
+            c1 = c1s[i]
+            m = ms[i]
+            inv_dx = 1.0 / np.where(dx[i] == 0.0, 1.0, dx[i])
+            common = c1 + c1s[i + 1] - 2.0 * m
+            c2s[i] = (m - c1 - common) * inv_dx
+            c3s[i] = common * inv_dx * inv_dx
+
+        lut = np.zeros(256, dtype=np.float32)
+        for x in range(256):
+            i = 0
+            while i < n - 2 and x > xs[i + 1]:
+                i += 1
+            diff = x - xs[i]
+            y = ys[i] + c1s[i] * diff + c2s[i] * (diff ** 2) + c3s[i] * (diff ** 3)
+            lut[x] = y
+
         return np.clip(lut, 0, 255).astype(np.uint8)
 
     @staticmethod
@@ -278,40 +346,107 @@ class TrixLoadImageAIO:
         blur_img = base_img.filter(ImageFilter.GaussianBlur(radius=max(0.1, float(radius))))
         blur_arr = np.array(blur_img).astype(np.float32) / 255.0
 
-        diff = arr - blur_arr
-        if midtone_only:
-            luma = np.dot(arr[..., :3], [0.2126, 0.7152, 0.0722])
-            mask = 1.0 - np.clip(np.abs(luma - 0.5) * 2.0, 0.0, 1.0)
-            mask = np.power(mask, 1.25)[..., None]
-            diff = diff * mask
+        if amount < 0:
+            blend_factor = min(0.8, -amount)
+            if midtone_only:
+                luma = np.dot(arr[..., :3], [0.2126, 0.7152, 0.0722])
+                mask = 1.0 - np.clip(np.abs(luma - 0.5) * 2.0, 0.0, 1.0)
+                mask = np.power(mask, 1.25)[..., None]
+                blend_factor = blend_factor * mask
+            arr = arr + (blur_arr - arr) * blend_factor
+        else:
+            diff = arr - blur_arr
+            if midtone_only:
+                luma = np.dot(arr[..., :3], [0.2126, 0.7152, 0.0722])
+                mask = 1.0 - np.clip(np.abs(luma - 0.5) * 2.0, 0.0, 1.0)
+                mask = np.power(mask, 1.25)[..., None]
+                diff = diff * mask
+            arr = arr + diff * float(amount)
+        return np.clip(arr, 0.0, 1.0)
 
-        arr = arr + diff * float(amount)
+    @staticmethod
+    def apply_clarity(arr, amount, scale_ratio=1.0):
+        if amount == 0:
+            return arr
+        base_img = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8))
+        blur_img = base_img.filter(ImageFilter.GaussianBlur(radius=max(0.1, 20.0 * scale_ratio)))
+        blur_arr = np.array(blur_img).astype(np.float32) / 255.0
+        
+        factor = amount / 200.0
+        luma = np.dot(arr[..., :3], [0.299, 0.587, 0.114])[..., None]
+        weight = 1.0 - np.power(np.abs(luma - 0.5) * 2.0, 2.0)
+        
+        if factor > 0:
+            arr = arr + (arr - blur_arr) * (factor * weight * 0.8)
+        else:
+            arr = arr + (blur_arr - arr) * ((-factor) * weight * 0.8)
         return np.clip(arr, 0.0, 1.0)
 
     def apply_camera_raw(self, img, kwargs):
-        if not kwargs.get("cr_enable", False):
+        cr_enable = kwargs.get("cr_enable", False)
+        hsl_active = kwargs.get("hsl_active", False)
+        curve_active = kwargs.get("curve_active", False)
+        
+        if not cr_enable and not hsl_active and not curve_active:
             return img
 
-        exp = kwargs.get("cr_exp", 0)
-        cont = kwargs.get("cr_cont", 0)
-        sat = kwargs.get("cr_sat", 0)
-        sharp = kwargs.get("cr_sharp", 0)
-        clar = kwargs.get("cr_clar", 0)
-        tex = kwargs.get("cr_tex", 0)
-        blur = kwargs.get("cr_blur", 0)
-        
-        high = kwargs.get("cr_high", 0)
-        shad = kwargs.get("cr_shad", 0)
-        white = kwargs.get("cr_white", 0)
-        black = kwargs.get("cr_black", 0)
-        temp = kwargs.get("cr_temp", 0)
-        tint = kwargs.get("cr_tint", 0)
-        colorfulness = kwargs.get("cr_colorfulness", 0)
-        dehz = kwargs.get("cr_dehz", 0)
-        grain = kwargs.get("cr_grain", 0)
-        vignette = kwargs.get("cr_vignette", 0)
+        def safe_int(val, default=0):
+            if val is None:
+                return default
+            try:
+                return int(val)
+            except:
+                try:
+                    return int(float(val))
+                except:
+                    return default
 
-        needs_cr = any(v != 0 for v in [exp, high, shad, white, black, temp, tint, colorfulness, dehz, grain, vignette, cont, sat, sharp, clar, tex, blur])
+        def safe_float(val, default=0.0):
+            if val is None:
+                return default
+            try:
+                return float(val)
+            except:
+                return default
+
+        offset = safe_int(kwargs.get("cr_offset", 0))
+        exp = safe_int(kwargs.get("cr_exp", 0))
+        cont = safe_int(kwargs.get("cr_cont", 0))
+        sat = safe_int(kwargs.get("cr_sat", 0))
+        sharp = safe_int(kwargs.get("cr_sharp", 0))
+        denoise = safe_int(kwargs.get("cr_denoise", 0))
+        clar = safe_int(kwargs.get("cr_clar", 0))
+        tex = safe_int(kwargs.get("cr_tex", 0))
+        blur = safe_int(kwargs.get("cr_blur", 0))
+        surface_blur = safe_int(kwargs.get("cr_surface_blur", 0))
+        
+        high = safe_int(kwargs.get("cr_high", 0))
+        shad = safe_int(kwargs.get("cr_shad", 0))
+        white = safe_int(kwargs.get("cr_white", 0))
+        black = safe_int(kwargs.get("cr_black", 0))
+        temp = safe_int(kwargs.get("cr_temp", 0))
+        tint = safe_int(kwargs.get("cr_tint", 0))
+        vibrance = safe_int(kwargs.get("cr_vibrance", kwargs.get("cr_colorfulness", 0)))
+        dehz = safe_int(kwargs.get("cr_dehz", 0))
+        grain = safe_int(kwargs.get("cr_grain", 0))
+        vignette = safe_int(kwargs.get("cr_vignette", 0))
+
+        sketch_sigma = safe_float(kwargs.get("cr_sketch_sigma", 1.4), 1.4)
+        sketch_kernel_size = safe_int(kwargs.get("cr_sketch_kernel_size", 0))
+        pixel_dot_size = safe_int(kwargs.get("cr_pixel_dot_size", 0))
+
+        # Calculate dynamic scale ratio matching the JS frontend preview canvas width (MAX_PREVIEW_SIZE = 1200)
+        h_orig_img, w_orig_img = img.height, img.width
+        pW = float(w_orig_img)
+        pH = float(h_orig_img)
+        max_size = 1200.0
+        if pW > max_size or pH > max_size:
+            ratio = min(max_size / pW, max_size / pH)
+            pW = max(1.0, round(pW * ratio))
+            pH = max(1.0, round(pH * ratio))
+        scale_ratio = float(w_orig_img) / pW
+
+        needs_cr = cr_enable and (any(v != 0 for v in [offset, exp, cont, high, shad, white, black, temp, tint, vibrance, sat, tex, clar, dehz, sharp, denoise, blur, surface_blur, grain, vignette]) or sketch_kernel_size > 0 or pixel_dot_size > 1)
         
         needs_hsl = kwargs.get("hsl_active", False) and kwargs.get("hsl_data", "{}") != "{}"
         hsl_state = {}
@@ -342,55 +477,112 @@ class TrixLoadImageAIO:
             arr = np.array(img.convert("RGB")).astype(np.float32) / 255.0
             
             if needs_cr:
+                # 1. Temperature & Tint - Luminance-preserving color balance
                 if temp != 0 or tint != 0:
-                    arr[:,:,0] += temp / 200.0 + (tint * 2.0) / 400.0
-                    arr[:,:,1] -= (tint * 2.0) / 400.0
-                    arr[:,:,2] -= temp / 200.0 - (tint * 2.0) / 400.0
+                    lum = np.dot(arr[..., :3], [0.299, 0.587, 0.114])[..., None]
+                    # Color deviations from gray
+                    dev = arr[..., :3] - lum
 
+                    if temp != 0:
+                        t = temp / 100.0
+                        dev[..., 0] += t * 0.05  # red
+                        dev[..., 2] -= t * 0.05  # blue
+
+                    if tint != 0:
+                        t = tint / 100.0
+                        dev[..., 1] -= t * 0.04  # green
+                        dev[..., 0] += t * 0.02  # red
+                        dev[..., 2] += t * 0.02  # blue
+
+                    arr[..., :3] = lum + dev
+
+                arr = np.clip(arr, 0.0, 1.0)
                 luma = np.dot(arr[..., :3], [0.299, 0.587, 0.114])
 
+                # 2. Offset
+                if offset != 0:
+                    arr += offset / 100.0
+
+                # 3. Exposure
                 if exp != 0: 
-                    mult = 2.0 ** (exp / 50.0)
+                    mult = 2.0 ** (exp / 100.0)
                     arr = arr * mult
                     luma = luma * mult
 
+                # Highlights, Shadows, Whites, Blacks smoothstep masking
+                def smoothstep(edge0, edge1, x):
+                    t = np.clip((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+                    return t * t * (3.0 - 2.0 * t)
+
                 if shad != 0: 
                     shad_v = shad / 100.0
-                    mask = np.clip((0.72 - luma) / 0.72, 0.0, 1.0)
-                    mask = mask * mask * (3.0 - 2.0 * mask)
-                    if shad_v >= 0:
-                        lift = mask[..., None] * shad_v * 0.85
-                        arr += (1.0 - arr) * lift
+                    shad_mask = (1.0 - smoothstep(0.0, 0.65, luma))[..., None]
+                    if shad_v > 0:
+                        arr += (1.0 - arr) * (shad_mask * shad_v * 0.75)
                     else:
-                        darken = mask[..., None] * (-shad_v) * 0.8
-                        arr *= (1.0 - darken)
+                        arr += arr * (shad_mask * shad_v * 0.75)
 
                 if high != 0:
-                    mask = np.clip((luma - 0.5) / 0.5, 0, 1)
-                    arr += arr * mask[..., None] * (high/100.0) * 0.5
+                    high_v = high / 100.0
+                    high_mask = smoothstep(0.3, 1.0, luma)
+                    boost = high_mask * high_v * 0.8
+                    if high_v > 0:
+                        luma_new = luma + (1.0 - luma) * boost
+                    else:
+                        luma_new = luma + luma * boost
+                    ratio = luma_new / np.maximum(1e-5, luma)
+                    arr[..., :3] *= ratio[..., None]
+                    luma = luma_new
 
                 if white != 0:
-                    arr += (arr ** 2) * (white/100.0) * 0.5
+                    white_v = white / 100.0
+                    white_mask = smoothstep(0.45, 1.0, luma)
+                    boost = white_mask * white_v * 1.2
+                    if white_v > 0:
+                        luma_new = luma + (1.0 - luma) * boost
+                    else:
+                        luma_new = luma + luma * boost
+                    ratio = luma_new / np.maximum(1e-5, luma)
+                    arr[..., :3] *= ratio[..., None]
+                    luma = luma_new
 
                 if black != 0:
-                    arr -= ((1.0 - arr) ** 2) * (black/100.0) * 0.5
+                    black_v = black / 100.0
+                    black_mask = (1.0 - smoothstep(0.0, 0.35, luma))[..., None]
+                    if black_v > 0:
+                        arr += (1.0 - arr) * (black_mask * black_v * 0.8)
+                    else:
+                        arr += arr * (black_mask * black_v * 0.8)
 
                 if cont != 0:
                     f = 1.0 + (cont / 100.0)
                     arr = (arr - 0.5) * f + 0.5
 
-                if sat != 0:
-                    luma_new = np.dot(arr[..., :3], [0.299, 0.587, 0.114])
-                    arr = luma_new[..., None] + (arr - luma_new[..., None]) * (1.0 + sat/100.0)
+                # Clamp basic adjustments to [0.0, 1.0] range before entering color stages
+                arr = np.clip(arr, 0.0, 1.0)
 
-                if colorfulness != 0:
+                # Saturation: chroma-based (luminance-deviation scaling)
+                if sat != 0:
+                    luma_s = np.dot(arr[..., :3], [0.299, 0.587, 0.114])[..., None]
+                    sat_val = sat / 100.0
+                    if sat_val > 0:
+                        factor = 1.0 + sat_val * 1.5
+                    else:
+                        factor = 1.0 + sat_val
+                    arr[..., :3] = luma_s + (arr[..., :3] - luma_s) * factor
+                    arr = np.clip(arr, 0.0, 1.0)
+
+                if vibrance != 0:
+                    arr = np.clip(arr, 0.0, 1.0)
                     luma_c = np.dot(arr[..., :3], [0.299, 0.587, 0.114])
                     max_color = np.max(arr[..., :3], axis=2, keepdims=True)
                     min_color = np.min(arr[..., :3], axis=2, keepdims=True)
-                    sat_mask = 1.0 - (max_color - min_color)
-                    arr[..., :3] = arr[..., :3] + (arr[..., :3] - luma_c[..., None]) * (colorfulness/100.0) * sat_mask
+                    sat_mask = np.clip(1.0 - (max_color - min_color), 0.0, 1.0)
+                    arr[..., :3] = arr[..., :3] + (arr[..., :3] - luma_c[..., None]) * (vibrance/100.0) * sat_mask
+                    arr = np.clip(arr, 0.0, 1.0)
 
                 if dehz != 0:
+                    arr = np.clip(arr, 0.0, 1.0)
                     dehz_v = dehz / 150.0
                     luma_d = np.dot(arr[..., :3], [0.299, 0.587, 0.114])[..., None]
                     max_color = np.max(arr[..., :3], axis=2, keepdims=True)
@@ -408,6 +600,7 @@ class TrixLoadImageAIO:
                     else:
                         soften = (-dehz_v) * 0.45 * weight
                         arr = (arr - 0.5) * (1.0 - soften) + 0.5
+                    arr = np.clip(arr, 0.0, 1.0)
 
                 if vignette > 0:
                     h_img, w_img = arr.shape[:2]
@@ -427,7 +620,6 @@ class TrixLoadImageAIO:
             if needs_hsl:
                 hsl = self.rgb_to_hsl(arr)
                 hh, ss, ll = hsl[..., 0], hsl[..., 1], hsl[..., 2]
-                sat_strength = np.log(6.0)
                 
                 if hsl_state.get("colorize", False):
                     master = hsl_state.get("master", {"h":0, "s":0, "l":0})
@@ -436,11 +628,15 @@ class TrixLoadImageAIO:
                     hh = np.full_like(hh, h_val)
                     ss = np.clip(0.5 + (master.get("s", 0) / 100.0), 0.0, 1.0)
                     ll = self.apply_lightness_like_photoshop(ll, master.get("l", 0) / 100.0)
+                    hsl = np.stack([hh, ss, ll], axis=-1)
+                    arr = self.hsl_to_rgb(hsl)
+                    arr = np.clip(arr, 0.0, 1.0)
                 else:
                     master = hsl_state.get("master", {"h":0, "s":0, "l":0})
                     total_h_shift = np.full_like(hh, master.get("h", 0))
-                    total_s_mult = np.full_like(ss, np.exp((master.get("s", 0) / 100.0) * sat_strength))
                     total_l_shift = np.full_like(ll, master.get("l", 0) / 100.0)
+                    # Accumulate saturation as chroma multiplier
+                    total_chroma_mult = np.full_like(ss, 1.0 + (master.get("s", 0) / 100.0) * 1.2)
                     
                     for ch in ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas']:
                         if ch in hsl_state:
@@ -466,17 +662,25 @@ class TrixLoadImageAIO:
                             
                             if np.any(weight > 0):
                                 total_h_shift += conf.get("h",0) * weight
-                                total_s_mult *= np.exp((conf.get("s",0) / 100.0) * sat_strength * weight)
+                                total_chroma_mult += (conf.get("s",0) / 100.0) * 1.2 * weight
                                 total_l_shift += (conf.get("l",0) / 100.0) * weight
                                 
-                    hh = (hh + total_h_shift) % 360.0
-                    hh = np.where(hh < 0, hh + 360.0, hh)
-                    ss = np.clip(ss * total_s_mult, 0.0, 1.0)
-                    ll = self.apply_lightness_like_photoshop(ll, total_l_shift)
+                    new_h = (hh + total_h_shift) % 360.0
+                    new_h = np.where(new_h < 0, new_h + 360.0, new_h)
+                    new_l = self.apply_lightness_like_photoshop(ll, total_l_shift)
                     
-                hsl = np.stack([hh, ss, ll], axis=-1)
-                arr = self.hsl_to_rgb(hsl)
-                arr = np.clip(arr, 0.0, 1.0)
+                    # Convert back with original saturation (only hue + lightness changed)
+                    hsl = np.stack([new_h, ss, new_l], axis=-1)
+                    arr = self.hsl_to_rgb(hsl)
+                    arr = np.clip(arr, 0.0, 1.0)
+                    
+                    # Apply saturation as chroma scaling
+                    chroma_mult = np.clip(total_chroma_mult, 0.0, None)
+                    has_chroma_change = np.any(chroma_mult != 1.0)
+                    if has_chroma_change:
+                        luma_hsl = np.dot(arr[..., :3], [0.299, 0.587, 0.114])[..., None]
+                        arr[..., :3] = luma_hsl + (arr[..., :3] - luma_hsl) * chroma_mult[..., None]
+                        arr = np.clip(arr, 0.0, 1.0)
 
             if needs_curve:
                 lut_rgb = self.build_curve_lut(curve_state.get("rgb", []))
@@ -497,15 +701,234 @@ class TrixLoadImageAIO:
                 arr[..., :3] = rgb.astype(np.float32) / 255.0
 
             if tex != 0:
-                arr = self.apply_detail_pass(arr, radius=0.9, amount=tex / 140.0, midtone_only=False)
+                arr = self.apply_detail_pass(arr, radius=0.9 * scale_ratio, amount=tex / 140.0, midtone_only=False)
             if clar != 0:
-                arr = self.apply_detail_pass(arr, radius=2.0, amount=clar / 130.0, midtone_only=True)
+                arr = self.apply_clarity(arr, clar, scale_ratio=scale_ratio)
             if sharp > 0:
-                arr = self.apply_detail_pass(arr, radius=1.6, amount=sharp / 110.0, midtone_only=False)
+                arr = self.apply_detail_pass(arr, radius=1.6 * scale_ratio, amount=sharp / 110.0, midtone_only=False)
+
+            if denoise > 0:
+                cv2 = import_cv2()
+                img_u8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+                sigma_color = (denoise / 150.0) * 35.0 + 5.0
+                sigma_space = 3.0 + denoise / 50.0
+                img_u8 = cv2.bilateralFilter(img_u8, d=9, sigmaColor=sigma_color, sigmaSpace=sigma_space)
+                arr = img_u8.astype(np.float32) / 255.0
+
             if blur > 0:
                 blur_img = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8))
-                blur_img = blur_img.filter(ImageFilter.GaussianBlur(radius=blur / 10.0))
+                blur_img = blur_img.filter(ImageFilter.GaussianBlur(radius=(blur / 10.0) * scale_ratio))
                 arr = np.array(blur_img).astype(np.float32) / 255.0
+
+            if surface_blur > 0:
+                cv2 = import_cv2()
+                img_u8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+                r = max(1, min(8, int(round(surface_blur / 25.0))))
+                d = r * 2 + 1
+                sigma_color = (surface_blur / 200.0) * 90.0 + 10.0
+                sigma_space = d * 2.0
+                img_u8 = cv2.bilateralFilter(img_u8, d=d, sigmaColor=sigma_color, sigmaSpace=sigma_space)
+                arr = img_u8.astype(np.float32) / 255.0
+
+            if sketch_kernel_size > 0:
+                cv2 = import_cv2()
+                img_u8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+                
+                try:
+                    k_sigma = float(kwargs.get("cr_sketch_k_sigma", 1.6))
+                except:
+                    k_sigma = 1.6
+                    
+                try:
+                    epsilon = float(kwargs.get("cr_sketch_epsilon", -0.03))
+                except:
+                    epsilon = -0.03
+                    
+                try:
+                    phi = float(kwargs.get("cr_sketch_phi", 10.0))
+                except:
+                    phi = 10.0
+                    
+                try:
+                    gamma = float(kwargs.get("cr_sketch_gamma", 1.0))
+                except:
+                    gamma = 1.0
+                    
+                color_mode = kwargs.get("cr_sketch_color", "gray")
+                if color_mode is None:
+                    color_mode = "gray"
+                elif isinstance(color_mode, int):
+                    color_list = ["gray", "rgb"]
+                    if 0 <= color_mode < len(color_list):
+                        color_mode = color_list[color_mode]
+                    else:
+                        color_mode = "gray"
+                else:
+                    color_mode = str(color_mode)
+
+                if color_mode == "gray":
+                    gray = cv2.cvtColor(img_u8, cv2.COLOR_RGB2GRAY)
+                else:
+                    gray = img_u8
+
+                # Scale the sigma value and compute Gaussian kernel sizes and standard deviations
+                if sketch_kernel_size > 0:
+                    ksize1 = sketch_kernel_size | 1
+                    ksize2 = int(round(sketch_kernel_size * k_sigma)) | 1
+                    
+                    sigma1 = min(sketch_sigma, 0.3 * ((ksize1 - 1) * 0.5 - 1) + 0.8)
+                    sigma2 = min(sketch_sigma * k_sigma, 0.3 * ((ksize2 - 1) * 0.5 - 1) + 0.8)
+                    
+                    scaled_sigma1 = sigma1 * scale_ratio
+                    scaled_sigma2 = sigma2 * scale_ratio
+                else:
+                    scaled_sigma = sketch_sigma * scale_ratio
+                    scaled_k_sigma = scaled_sigma * k_sigma
+                    ksize1 = int(round(scaled_sigma * 3.0)) * 2 + 1
+                    ksize1 = max(1, ksize1)
+                    ksize2 = int(round(scaled_k_sigma * 3.0)) * 2 + 1
+                    ksize2 = max(1, ksize2)
+                    scaled_sigma1 = scaled_sigma
+                    scaled_sigma2 = scaled_k_sigma
+
+                g1 = cv2.GaussianBlur(gray, (ksize1, ksize1), scaled_sigma1)
+                g2 = cv2.GaussianBlur(gray, (ksize2, ksize2), scaled_sigma2)
+                
+                gamma_fixed = float(gamma) - 0.001
+                dog = g1.astype(np.float32) / 255.0 - gamma_fixed * (g2.astype(np.float32) / 255.0)
+                
+                dog_max = dog.max()
+                if dog_max > 0:
+                    dog = dog / dog_max
+                
+                phi_fixed = float(phi) - 0.001
+                eps_fixed = float(epsilon) - 0.001
+                
+                e = 1.0 + np.tanh(phi_fixed * (dog - eps_fixed))
+                e[e >= 1.0] = 1.0
+                
+                res_u8 = np.clip(e * 255.0, 0, 255).astype(np.uint8)
+                if color_mode == "gray":
+                    img_u8 = cv2.cvtColor(res_u8, cv2.COLOR_GRAY2RGB)
+                else:
+                    img_u8 = res_u8
+                arr = img_u8.astype(np.float32) / 255.0
+
+            if pixel_dot_size > 1:
+                import cv2
+                img_u8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+                h_orig, w_orig = img_u8.shape[:2]
+                
+                erode = safe_int(kwargs.get("cr_pixel_outline", 0))
+                blur_val = safe_int(kwargs.get("cr_pixel_smoothing", 0))
+                
+                if erode > 0 and erode <= 9:
+                    inflate_filters = [
+                        None,
+                        np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8),
+                        np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]], np.uint8),
+                        np.array([[0, 0, 1, 0, 0], [0, 1, 1, 1, 0], [1, 1, 1, 1, 1], [0, 1, 1, 1, 0], [0, 0, 1, 0, 0]], np.uint8),
+                        np.array([[1, 1, 1, 1, 1], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1]], np.uint8),
+                        np.ones((7, 7), np.uint8),
+                        np.ones((9, 9), np.uint8),
+                        np.ones((11, 11), np.uint8),
+                        np.ones((13, 13), np.uint8),
+                        np.ones((15, 15), np.uint8)
+                    ]
+                    img_u8 = cv2.erode(img_u8, inflate_filters[erode], iterations=1)
+                
+                # Scale the dot size based on the scale ratio so it visually matches the editor preview canvas
+                scaled_dot_size = max(2, int(round(pixel_dot_size * scale_ratio)))
+                d_h = max(1, h_orig // scaled_dot_size)
+                d_w = max(1, w_orig // scaled_dot_size)
+                img_down = cv2.resize(img_u8, (d_w, d_h), interpolation=cv2.INTER_NEAREST)
+                
+                # Apply bilateral filter smoothing on the downscaled intermediate image (matching optimized JS applyPixelize)
+                if blur_val > 0:
+                    d = max(3, int(round(15.0 / scaled_dot_size)))
+                    if d % 2 == 0:
+                        d += 1
+                    d = min(15, d)
+                    sigma_space = max(1.5, 20.0 / scaled_dot_size)
+                    img_down = cv2.bilateralFilter(img_down, d, blur_val * 20.0, sigma_space)
+                
+                k_colors = safe_int(kwargs.get("cr_pixel_colors", 128), 128)
+                algo = kwargs.get("cr_pixel_algo", "kmeans")
+                if algo is None:
+                    algo = "kmeans"
+                elif isinstance(algo, int):
+                    algo_list = ["kmeans", "dithering", "kmeans with dithering"]
+                    if 0 <= algo < len(algo_list):
+                        algo = algo_list[algo]
+                    else:
+                        algo = "kmeans"
+                else:
+                    algo = str(algo)
+                
+                if "kmeans" in algo:
+                    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.01)
+                    img_flat = img_down.reshape(-1, 3).astype(np.float32)
+                    compactness, labels, centers = cv2.kmeans(img_flat, k_colors, None, criteria, 1, cv2.KMEANS_PP_CENTERS)
+                    centers = centers.astype(np.uint8)
+                    
+                    if "dithering" in algo:
+                        palette = centers.astype(np.float32) / 255.0
+                        img_float = img_down.astype(np.float32) / 255.0
+                        
+                        h_d, w_d, c_d = img_float.shape
+                        for dy_d in range(h_d):
+                            for dx_d in range(w_d):
+                                old_v = img_float[dy_d, dx_d].copy()
+                                diffs = palette - old_v
+                                dists = np.sum(diffs * diffs, axis=1)
+                                best_idx = np.argmin(dists)
+                                new_v = palette[best_idx]
+                                img_float[dy_d, dx_d] = new_v
+                                err = old_v - new_v
+                                if dx_d < w_d - 1:
+                                    img_float[dy_d, dx_d + 1] += err * 7.0 / 16.0
+                                if dy_d < h_d - 1:
+                                    img_float[dy_d + 1, dx_d] += err * 5.0 / 16.0
+                                    if dx_d > 0:
+                                        img_float[dy_d + 1, dx_d - 1] += err * 3.0 / 16.0
+                                    if dx_d < w_d - 1:
+                                        img_float[dy_d + 1, dx_d + 1] += err * 1.0 / 16.0
+                        
+                        img_down = np.clip(img_float * 255.0, 0, 255).astype(np.uint8)
+                    else:
+                        img_down = centers[labels.flatten()].reshape(img_down.shape)
+                elif algo == "dithering":
+                    palette = np.array([[r, g, b] for r in np.linspace(0, 1, int(np.cbrt(k_colors))) 
+                                                  for g in np.linspace(0, 1, int(np.cbrt(k_colors))) 
+                                                  for b in np.linspace(0, 1, int(np.cbrt(k_colors)))], dtype=np.float32)
+                    if len(palette) < 2:
+                        palette = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
+                    img_float = img_down.astype(np.float32) / 255.0
+                    h_d, w_d, c_d = img_float.shape
+                    for dy_d in range(h_d):
+                        for dx_d in range(w_d):
+                            old_v = img_float[dy_d, dx_d].copy()
+                            diffs = palette - old_v
+                            dists = np.sum(diffs * diffs, axis=1)
+                            best_idx = np.argmin(dists)
+                            new_v = palette[best_idx]
+                            img_float[dy_d, dx_d] = new_v
+                            err = old_v - new_v
+                            if dx_d < w_d - 1:
+                                img_float[dy_d, dx_d + 1] += err * 7.0 / 16.0
+                            if dy_d < h_d - 1:
+                                img_float[dy_d + 1, dx_d] += err * 5.0 / 16.0
+                                if dx_d > 0:
+                                    img_float[dy_d + 1, dx_d - 1] += err * 3.0 / 16.0
+                                if dx_d < w_d - 1:
+                                    img_float[dy_d + 1, dx_d + 1] += err * 1.0 / 16.0
+                    img_down = np.clip(img_float * 255.0, 0, 255).astype(np.uint8)
+                    
+                img_up = cv2.resize(img_down, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
+                arr = img_up.astype(np.float32) / 255.0
+
+            arr = np.clip(arr, 0.0, 1.0)
+            img = Image.fromarray((arr * 255.0).astype(np.uint8))
                 
             arr = np.clip(arr, 0.0, 1.0)
             img = Image.fromarray((arr * 255.0).astype(np.uint8))
@@ -515,18 +938,34 @@ class TrixLoadImageAIO:
 
         return img
 
-    def process(self, image, width, height, pad_left, pad_top, pad_right, pad_bottom, upscale_method, keep_proportion, scale_by, condition, feathering, divisible_by, enable_resize, mode, mask_data, crop_data="{}", hsl_data="{}", hsl_active=False, curve_data="{}", curve_active=False, crop_position="center", in_image=None, in_mask=None, unique_id=None, **kwargs):
+    def process(self, image, width, height, pad_left, pad_top, pad_right, pad_bottom, upscale_method, keep_proportion, scale_by, condition, feathering, divisible_by, enable_resize, mode, mask_data, crop_data="{}", hsl_data="{}", hsl_active=False, curve_data="{}", curve_active=False, crop_position="center", in_image=None, in_mask=None, unique_id=None, trix_uuid="", **kwargs):
         
         # Cleanup old trix_edited files for this node to save disk space
         if unique_id:
             try:
                 import folder_paths
+                import re
                 input_dir = folder_paths.get_input_directory()
                 aio_dir = os.path.join(input_dir, "aio_input")
                 if os.path.exists(aio_dir):
                     safe_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(unique_id))
-                    prefix = f"trix_edited_{safe_id}_"
                     current_filename = os.path.basename(image) if image else ""
+                    
+                    # 1. Clean up new naming formats
+                    m = re.match(r"^(.*?_)(edited|masked|pasted)_([a-zA-Z0-9_-]+)_\d+\.png$", current_filename)
+                    if m:
+                        base_prefix = m.group(1)
+                        node_id = m.group(3)
+                        for f in os.listdir(aio_dir):
+                            pattern = rf"^{re.escape(base_prefix)}(edited|masked|pasted)_{re.escape(node_id)}_\d+\.png$"
+                            if re.match(pattern, f) and f != current_filename:
+                                try:
+                                    os.remove(os.path.join(aio_dir, f))
+                                except Exception:
+                                    pass
+                    
+                    # 2. Fallback clean up old prefix formats
+                    prefix = f"trix_edited_{safe_id}_"
                     for f in os.listdir(aio_dir):
                         if f.startswith(prefix) and f.endswith(".png") and f != current_filename:
                             try:
@@ -557,12 +996,15 @@ class TrixLoadImageAIO:
             img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
             
             # Save original image as a separate variable before any resize/crop/base edits
-            orig_image_tensor = None
+            orig_image_tensor = in_image
             
             input_dir = folder_paths.get_input_directory()
             aio_dir = os.path.join(input_dir, "aio_input")
             os.makedirs(aio_dir, exist_ok=True)
-            safe_unique_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(unique_id)) if unique_id else "preview"
+            if trix_uuid:
+                safe_unique_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(trix_uuid))
+            else:
+                safe_unique_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(unique_id)) if unique_id else "preview"
             preview_filename = f"aio_wired_{safe_unique_id}.png"
             file_name_full = f"aio_input/{preview_filename}"
             
@@ -748,6 +1190,13 @@ class TrixLoadImageAIO:
         }
         resample = resample_filters.get(upscale_method, Image.LANCZOS)
 
+        # Apply Camera Raw filters (exposure, HSL, curves) before resize/padding/outpainting
+        kwargs["hsl_data"] = hsl_data
+        kwargs["hsl_active"] = hsl_active
+        kwargs["curve_data"] = curve_data
+        kwargs["curve_active"] = curve_active
+        img = self.apply_camera_raw(img, kwargs)
+
         if enable_resize:
             old_w, old_h = img.size
             
@@ -924,14 +1373,6 @@ class TrixLoadImageAIO:
 
         output_image = img.convert("RGB")
         
-        # Обновляем kwargs новыми данными, так как ComfyUI передает их напрямую
-        kwargs["hsl_data"] = hsl_data
-        kwargs["hsl_active"] = hsl_active
-        kwargs["curve_data"] = curve_data
-        kwargs["curve_active"] = curve_active
-        
-        output_image = self.apply_camera_raw(output_image, kwargs)
-        
         output_image = np.array(output_image).astype(np.float32) / 255.0
         output_image = torch.from_numpy(output_image)[None,]
         
@@ -943,10 +1384,12 @@ class TrixLoadImageAIO:
         if unique_id is not None and ui_images:
             payload = {"id": unique_id}
             if ui_images: payload["images"] = ui_images
+            if trix_uuid: payload["trix_uuid"] = trix_uuid
             PromptServer.instance.send_sync("trix-update-preview", payload)
         
         ui_return = {}
         if ui_images: ui_return["images"] = ui_images
+        if trix_uuid: ui_return["trix_uuid"] = trix_uuid
 
         if ui_return:
             return {"ui": ui_return, "result": final_result}
@@ -955,6 +1398,10 @@ class TrixLoadImageAIO:
 
     @classmethod
     def IS_CHANGED(s, **kwargs):
+        # If upstream image or mask are connected, we bypass caching to avoid freezing dynamic frames/tensors
+        if kwargs.get("in_image") is not None or kwargs.get("in_mask") is not None:
+            return float("nan")
+
         import hashlib
         m = hashlib.sha256()
         
@@ -1407,6 +1854,34 @@ def download_model_thread(url, dest_path, model_name, dest_dir):
         with _ACTIVE_DOWNLOADS_LOCK:
             if model_name in _ACTIVE_DOWNLOADS:
                 del _ACTIVE_DOWNLOADS[model_name]
+
+@PromptServer.instance.routes.get('/trix/get_presets')
+async def api_get_presets(request):
+    try:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        presets_path = os.path.join(current_dir, "trix_presets.json")
+        if os.path.exists(presets_path):
+            with open(presets_path, 'r', encoding='utf-8') as f:
+                presets = json.load(f)
+        else:
+            presets = []
+        return web.json_response(presets)
+    except Exception as e:
+        print(f"TrixLoader error getting presets: {e}")
+        return web.json_response([], status=500)
+
+@PromptServer.instance.routes.post('/trix/save_presets')
+async def api_save_presets(request):
+    try:
+        data = await request.json()
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        presets_path = os.path.join(current_dir, "trix_presets.json")
+        with open(presets_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return web.json_response({"status": "ok"})
+    except Exception as e:
+        print(f"TrixLoader error saving presets: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 @PromptServer.instance.routes.get('/trix/model_status')
 async def api_model_status(request):
@@ -2507,7 +2982,6 @@ async def api_sam_predict(request):
         traceback.print_exc()
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
-_INSPYRENET_REMOVER = None
 
 def get_inspyrenet_remover(device):
     global _LOADED_MODELS
@@ -2989,8 +3463,11 @@ async def api_remove_background(request):
 
         mask_img = await asyncio.to_thread(run_inference)
         
-        # Offload background removal models after execution
-        offload_other_models("")
+        # Offload other models, but keep the current background removal model cached on GPU
+        current_model_key = model_name
+        if model_name not in ["inspyrenet-bf16.safetensors", "Ben2.safetensors"]:
+            current_model_key = f"birefnet_{model_name}"
+        offload_other_models(current_model_key)
         
         buffered = BytesIO()
         mask_img.save(buffered, format="PNG")
@@ -3312,4 +3789,136 @@ async def api_refine_mask(request):
     except Exception as e:
         traceback.print_exc()
         return web.json_response({"status": "error", "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post('/trix/save_image_with_mask')
+async def api_save_image_with_mask(request):
+    try:
+        post = await request.post()
+        image_file = post.get("image")
+        mask_file = post.get("mask")
+        filename = post.get("filename")
+        subfolder = post.get("subfolder", "")
+        dir_type = post.get("type", "input")
+        overwrite = post.get("overwrite", "true")
+
+        if not image_file or not filename:
+            return web.json_response({"error": "Missing image or filename"}, status=400)
+
+        import folder_paths
+        upload_dir = folder_paths.get_directory_by_type(dir_type)
+        if upload_dir is None:
+            return web.json_response({"error": f"Invalid directory type: {dir_type}"}, status=400)
+
+        if subfolder:
+            full_output_folder = os.path.join(upload_dir, os.path.normpath(subfolder))
+        else:
+            full_output_folder = upload_dir
+
+        filepath = os.path.abspath(os.path.join(full_output_folder, filename))
+
+        # Security check: prevent traversal
+        if os.path.commonpath((upload_dir, filepath)) != upload_dir:
+            return web.json_response({"error": "Access denied"}, status=403)
+
+        if not os.path.exists(full_output_folder):
+            os.makedirs(full_output_folder)
+
+        # Cleanup old versions of this node's files before saving new one
+        import re
+        m = re.match(r"^(.*?_)(edited|masked|pasted)_([a-zA-Z0-9_-]+)_\d+\.png$", filename)
+        if m:
+            base_prefix = m.group(1)
+            node_id = m.group(3)
+            try:
+                # 1. Clean up same base name and same node edits
+                for f in os.listdir(full_output_folder):
+                    pattern = rf"^{re.escape(base_prefix)}(edited|masked|pasted)_{re.escape(node_id)}_\d+\.png$"
+                    if re.match(pattern, f) and f != filename:
+                        try:
+                            os.remove(os.path.join(full_output_folder, f))
+                        except Exception:
+                            pass
+                
+                # 2. Clean up any leftover old format names for this node
+                old_patterns = [
+                    rf"^masked_{re.escape(node_id)}_\d+\.png$",
+                    rf"^trix_crop_{re.escape(node_id)}_\d+\.png$",
+                    rf"^trix_edited_{re.escape(node_id)}_\d+\.png$"
+                ]
+                for f in os.listdir(full_output_folder):
+                    for pat in old_patterns:
+                        if re.match(pat, f) and f != filename:
+                            try:
+                                os.remove(os.path.join(full_output_folder, f))
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+        if overwrite != "true" and overwrite != "1":
+            split = os.path.splitext(filename)
+            i = 1
+            while os.path.exists(filepath):
+                filename = f"{split[0]} ({i}){split[1]}"
+                filepath = os.path.join(full_output_folder, filename)
+                i += 1
+
+        # If mask_file is provided, merge mask into image alpha channel.
+        # Otherwise, save the uploaded image directly to disk.
+        if mask_file:
+            opaque_img = Image.open(image_file.file).convert("RGB")
+            mask_img = Image.open(mask_file.file).convert("RGBA")
+            r, g, b, a = mask_img.split()
+            r_np = np.array(r)
+            g_np = np.array(g)
+            b_np = np.array(b)
+            a_np = np.array(a).astype(np.float32) / 255.0
+            
+            if np.any(a_np < 1.0):
+                mask_val = (a_np * 255.0).astype(np.uint8)
+            else:
+                max_rgb = np.maximum(np.maximum(r_np, g_np), b_np)
+                mask_val = max_rgb
+            
+            alpha_channel = Image.fromarray(255 - mask_val, mode="L")
+            if alpha_channel.size != opaque_img.size:
+                alpha_channel = alpha_channel.resize(opaque_img.size, Image.BILINEAR)
+            opaque_img.putalpha(alpha_channel)
+            opaque_img.save(filepath, compress_level=4)
+        else:
+            image_file.file.seek(0)
+            with open(filepath, "wb") as f:
+                f.write(image_file.file.read())
+
+        # Save a copy if "save_every_step" is enabled
+        save_every_step = post.get("save_every_step", "false") == "true"
+        if save_every_step:
+            custom_path = post.get("save_every_step_path", "").strip()
+            if custom_path:
+                try:
+                    if not os.path.isabs(custom_path):
+                        import folder_paths
+                        comfy_root = os.path.dirname(folder_paths.get_input_directory())
+                        target_dir = os.path.abspath(os.path.join(comfy_root, custom_path))
+                    else:
+                        target_dir = os.path.abspath(custom_path)
+                    
+                    if not os.path.exists(target_dir):
+                        os.makedirs(target_dir)
+                    
+                    target_file = os.path.join(target_dir, filename)
+                    import shutil
+                    shutil.copy2(filepath, target_file)
+                    print(f"TrixLoader: Saved step copy to {target_file}")
+                except Exception as e:
+                    print(f"TrixLoader: Error saving step copy: {e}")
+
+        resp = {"name": filename, "subfolder": subfolder, "type": dir_type}
+        return web.json_response(resp)
+
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
 

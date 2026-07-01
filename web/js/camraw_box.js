@@ -299,17 +299,25 @@ function ensureTooltipStyles() {
     }
 }
 
-export function openTrixCameraRawEditor(node) {
+export function openTrixCamrawBox(node, imgElement, savedMaskCanvas) {
     try {
         const abortCtrl = new AbortController();
-        if (!node.imgTagRef || !node.imgTagRef.naturalWidth) {
+        if (!imgElement || !imgElement.naturalWidth) {
             alert("Please load an image first!");
             return;
         }
 
     const origImgObj = new Image();
     origImgObj.crossOrigin = "Anonymous";
-    origImgObj.src = node.imgTagRef.src;
+    let opaqueSrc = imgElement.src;
+    if (opaqueSrc && !opaqueSrc.startsWith("data:") && !opaqueSrc.startsWith("blob:")) {
+        try {
+            const url = new URL(opaqueSrc, window.location.origin);
+            url.searchParams.set("channel", "rgb");
+            opaqueSrc = url.toString();
+        } catch(e) {}
+    }
+    origImgObj.src = opaqueSrc;
 
     const TRIX_AIO_SUBFOLDER = "aio_input";
     const getCleanOrigBaseName = (src) => {
@@ -333,7 +341,7 @@ export function openTrixCameraRawEditor(node) {
     const trixCropFilename = (nodeId, version) => {
         const uWgt = node.widgets ? node.widgets.find(w => w.name === "trix_uuid") : null;
         const idToUse = uWgt && uWgt.value ? uWgt.value : nodeId;
-        const origBase = getCleanOrigBaseName(node.imgTagRef.src);
+        const origBase = getCleanOrigBaseName(imgElement.src);
         return `${origBase}_edited_${idToUse}_${version}.png`;
     };
 
@@ -386,6 +394,34 @@ export function openTrixCameraRawEditor(node) {
         cr_pixel_algo: getSV('cr_pixel_algo', 'kmeans')
     };
 
+    const defaultCrState = {
+        cr_offset: 0, cr_exp: 0, cr_cont: 0, cr_high: 0, cr_shad: 0, cr_white: 0, cr_black: 0,
+        cr_temp: 0, cr_tint: 0, cr_vibrance: 0, cr_colorfulness: 0, cr_sat: 0,
+        cr_tex: 0, cr_clar: 0, cr_dehz: 0, cr_sharp: 0, cr_denoise: 0,
+        cr_blur: 0, cr_surface_blur: 0, cr_grain: 0, cr_vignette: 0,
+        cr_sketch_kernel_size: 0, cr_sketch_sigma: 1.4, cr_sketch_k_sigma: 1.6, cr_sketch_epsilon: -0.03, cr_sketch_phi: 10.0, cr_sketch_gamma: 1.0, cr_sketch_color: 'gray',
+        cr_pixel_colors: 128, cr_pixel_dot_size: 0, cr_pixel_outline: 0, cr_pixel_smoothing: 0, cr_pixel_algo: 'kmeans'
+    };
+
+    const defaultHslState = {
+        colorize: false,
+        activeChannel: 'master',
+        master:   { h: 0, s: 0, l: 0 },
+        reds:     { h: 0, s: 0, l: 0, center: 0, width: 60 },
+        yellows:  { h: 0, s: 0, l: 0, center: 60, width: 60 },
+        greens:   { h: 0, s: 0, l: 0, center: 120, width: 60 },
+        cyans:    { h: 0, s: 0, l: 0, center: 180, width: 60 },
+        blues:    { h: 0, s: 0, l: 0, center: 240, width: 60 },
+        magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
+    };
+
+    const defaultCurvesState = {
+        rgb: [{x:0, y:0}, {x:255, y:255}],
+        r:   [{x:0, y:0}, {x:255, y:255}],
+        g:   [{x:0, y:0}, {x:255, y:255}],
+        b:   [{x:0, y:0}, {x:255, y:255}]
+    };
+
     let hslState = {
         colorize: false,
         activeChannel: 'master', 
@@ -413,7 +449,41 @@ export function openTrixCameraRawEditor(node) {
         } catch(e) {}
     }
 
-    let crHistory = [ JSON.stringify({ state, hslState, curvesState }) ];
+    // --- Layers Initialization ---
+    let layers = [];
+    if (node.properties && node.properties.trix_layers) {
+        try {
+            layers = typeof node.properties.trix_layers === "string" 
+                ? JSON.parse(node.properties.trix_layers) 
+                : node.properties.trix_layers;
+        } catch (e) {
+            console.error("Failed to parse saved layers:", e);
+        }
+    }
+    let layersMode = (node.properties && node.properties.trix_layers_mode) || "filter";
+    if (!Array.isArray(layers) || layers.length === 0) {
+        layers = [{
+            id: "layer_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+            name: "Layer 1",
+            visible: true,
+            opacity: 100,
+            blendMode: "source-over",
+            state: { ...state },
+            hslState: JSON.parse(JSON.stringify(hslState)),
+            curvesState: JSON.parse(JSON.stringify(curvesState))
+        }];
+    }
+    let selectedLayerIndex = 0;
+    
+    // Bind initial references to the selected layer
+    state = layers[selectedLayerIndex].state;
+    hslState = layers[selectedLayerIndex].hslState;
+    curvesState = layers[selectedLayerIndex].curvesState;
+
+    let crHistory = [ JSON.stringify({
+        layers: JSON.parse(JSON.stringify(layers)),
+        selectedLayerIndex: selectedLayerIndex
+    }) ];
     let crHistoryIdx = 0;
 
     let curvesFingerBtn;
@@ -433,6 +503,565 @@ export function openTrixCameraRawEditor(node) {
         e.preventDefault();
         e.stopPropagation();
     };
+
+    // --- Layers Panel UI ---
+    const layersPanel = document.createElement("div");
+    layersPanel.style.cssText = `
+        width: 0px; min-width: 0px; height: 100%; max-height: 100vh; background: #151515;
+        border-right: 0px solid #333; z-index: 10; overflow: visible;
+        position: relative; transition: width 0.3s ease, min-width 0.3s ease, border-right 0.3s ease;
+    `;
+    
+    const layersPanelContent = document.createElement("div");
+    layersPanelContent.style.cssText = `
+        width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden;
+    `;
+    layersPanel.appendChild(layersPanelContent);
+    const layersNotch = document.createElement("div");
+    layersNotch.style.cssText = `
+        position: absolute;
+        left: 100%;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 28px;
+        height: 140px;
+        background: #33789a;
+        border: 1px solid #33789a;
+        border-left: none;
+        border-radius: 0 8px 8px 0;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        z-index: 10001;
+        box-shadow: 2px 0 5px rgba(0,0,0,0.3);
+        transition: background 0.2s, color 0.2s, border-color 0.2s;
+        gap: 4px;
+    `;
+    layersNotch.innerHTML = `
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">L</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">A</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">Y</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">E</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">R</span>
+        <span style="font-size: 11px; font-weight: 900; font-family: sans-serif; pointer-events: none; line-height: 1.1; color: #fff;">S</span>
+    `;
+    layersNotch.onmouseenter = () => { layersNotch.style.background = "#3f8eb4"; layersNotch.style.borderColor = "#3f8eb4"; };
+    layersNotch.onmouseleave = () => { layersNotch.style.background = "#33789a"; layersNotch.style.borderColor = "#33789a"; };
+    layersPanel.appendChild(layersNotch);
+    const layersHeader = document.createElement("div");
+    layersHeader.style.cssText = "padding: 18px 18px 10px 18px; border-bottom: 1px solid #333; font-weight: bold; color: #fff; font-size: 14px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; min-height: 50px; box-sizing: border-box;";
+    
+    const titleSpan = document.createElement("span");
+    titleSpan.innerText = "Layers";
+    layersHeader.appendChild(titleSpan);
+
+    const pillContainer = document.createElement("div");
+    pillContainer.title = "Filter Mode: Apply adjustments sequentially (additive).\nImage Mode: Treat each layer as a standalone canvas.";
+    pillContainer.style.cssText = `
+        display: flex;
+        position: relative;
+        background: #111;
+        border: 1px solid #333;
+        border-radius: 12px;
+        padding: 2px;
+        font-size: 10px;
+        cursor: pointer;
+        user-select: none;
+        width: 100px;
+        height: 20px;
+        align-items: center;
+        box-sizing: border-box;
+        margin-left: auto;
+    `;
+
+    const filterBtn = document.createElement("div");
+    filterBtn.innerText = "Filter";
+    filterBtn.style.cssText = `
+        flex: 1;
+        text-align: center;
+        z-index: 2;
+        transition: color 0.2s;
+        font-weight: bold;
+        line-height: 14px;
+        color: #fff;
+    `;
+
+    const imageBtn = document.createElement("div");
+    imageBtn.innerText = "Image";
+    imageBtn.style.cssText = `
+        flex: 1;
+        text-align: center;
+        z-index: 2;
+        transition: color 0.2s;
+        font-weight: bold;
+        line-height: 14px;
+        color: #888;
+    `;
+
+    const pillBg = document.createElement("div");
+    pillBg.style.cssText = `
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 46px;
+        height: 14px;
+        background: #33789a;
+        border-radius: 9px;
+        transition: transform 0.2s ease;
+        z-index: 1;
+    `;
+
+    pillContainer.append(pillBg, filterBtn, imageBtn);
+    layersHeader.appendChild(pillContainer);
+    layersPanelContent.appendChild(layersHeader);
+
+    const setLayersMode = (mode) => {
+        layersMode = mode;
+        if (mode === "filter") {
+            pillBg.style.transform = "translateX(0px)";
+            filterBtn.style.color = "#fff";
+            imageBtn.style.color = "#888";
+        } else {
+            pillBg.style.transform = "translateX(48px)";
+            filterBtn.style.color = "#888";
+            imageBtn.style.color = "#fff";
+        }
+        scheduleRender();
+    };
+
+    filterBtn.onclick = (e) => {
+        e.stopPropagation();
+        setLayersMode("filter");
+    };
+    imageBtn.onclick = (e) => {
+        e.stopPropagation();
+        setLayersMode("image");
+    };
+    pillContainer.onclick = () => {
+        if (layersMode === "filter") {
+            setLayersMode("image");
+        } else {
+            setLayersMode("filter");
+        }
+    };
+    
+    setTimeout(() => {
+        setLayersMode(layersMode);
+    }, 0);
+
+    const layersListContainer = document.createElement("div");
+    layersListContainer.style.cssText = "flex: 1; overflow-y: auto; padding: 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px;";
+    layersListContainer.className = "trix-cr-panel";
+    layersPanelContent.appendChild(layersListContainer);
+
+    const layersButtonsRow = document.createElement("div");
+    layersButtonsRow.style.cssText = "display: flex; gap: 8px; margin-top: 4px; flex-shrink: 0; width: 100%; box-sizing: border-box;";
+
+    const addLayerBtn = document.createElement("button");
+    addLayerBtn.innerText = "Add New";
+    addLayerBtn.style.cssText = "flex: 1; padding: 8px; background: #2a2a2f; color: #eee; border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s;";
+    addLayerBtn.onmouseenter = () => { addLayerBtn.style.background = "#333a45"; addLayerBtn.style.color = "#fff"; };
+    addLayerBtn.onmouseleave = () => { addLayerBtn.style.background = "#2a2a2f"; addLayerBtn.style.color = "#eee"; };
+
+    const duplicateLayerBtn = document.createElement("button");
+    duplicateLayerBtn.innerText = "Duplicate";
+    duplicateLayerBtn.style.cssText = "flex: 1; padding: 8px; background: #2a2a2f; color: #eee; border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s;";
+    duplicateLayerBtn.onmouseenter = () => { duplicateLayerBtn.style.background = "#333a45"; duplicateLayerBtn.style.color = "#fff"; };
+    duplicateLayerBtn.onmouseleave = () => { duplicateLayerBtn.style.background = "#2a2a2f"; duplicateLayerBtn.style.color = "#eee"; };
+
+    layersButtonsRow.appendChild(addLayerBtn);
+    layersButtonsRow.appendChild(duplicateLayerBtn);
+    
+    const blendModes = [
+        { value: "source-over", label: "Normal" },
+        { value: "multiply", label: "Multiply" },
+        { value: "screen", label: "Screen" },
+        { value: "overlay", label: "Overlay" },
+        { value: "darken", label: "Darken" },
+        { value: "lighten", label: "Lighten" },
+        { value: "color-dodge", label: "Color Dodge" },
+        { value: "color-burn", label: "Color Burn" },
+        { value: "hard-light", label: "Hard Light" },
+        { value: "soft-light", label: "Soft Light" },
+        { value: "difference", label: "Difference" },
+        { value: "exclusion", label: "Exclusion" },
+        { value: "hue", label: "Hue" },
+        { value: "saturation", label: "Saturation" },
+        { value: "color", label: "Color" },
+        { value: "luminosity", label: "Luminosity" }
+    ];
+
+    const updateRightPanelUI = () => {
+        for (const key in state) {
+            const iEl = document.getElementById(`cr_input_${key}`);
+            const sEl = document.getElementById(`cr_slider_${key}`);
+            if (iEl) iEl.value = state[key];
+            if (sEl) sEl.value = state[key];
+        }
+        const sketchColorEl = document.getElementById("cr_sketch_color");
+        if (sketchColorEl) sketchColorEl.value = state.cr_sketch_color;
+        const pixelAlgoEl = document.getElementById("cr_pixel_algo");
+        if (pixelAlgoEl) pixelAlgoEl.value = state.cr_pixel_algo;
+        updateHslUI();
+        updateCurvesUI();
+    };
+
+    const renderLayersList = () => {
+        layersListContainer.innerHTML = "";
+        
+        for (let idx = 0; idx < layers.length; idx++) {
+            const layer = layers[idx];
+            
+            const block = document.createElement("div");
+            block.draggable = true;
+            block.style.cssText = `
+                padding: 8px 10px;
+                background: #1a1a1a;
+                border: 1px solid ${selectedLayerIndex === idx ? "#33789a" : "#444"};
+                border-radius: 4px;
+                display: flex;
+                flex-direction: column;
+                cursor: grab;
+                transition: border-color 0.2s, background 0.2s;
+                user-select: none;
+            `;
+            if (selectedLayerIndex !== idx) {
+                block.onmouseenter = () => block.style.borderColor = "#666";
+                block.onmouseleave = () => block.style.borderColor = "#444";
+            }
+            block.onclick = () => {
+                if (selectedLayerIndex !== idx) {
+                    selectedLayerIndex = idx;
+                    state = layers[selectedLayerIndex].state;
+                    hslState = layers[selectedLayerIndex].hslState;
+                    curvesState = layers[selectedLayerIndex].curvesState;
+                    updateRightPanelUI();
+                    renderLayersList();
+                }
+            };
+            
+            // Row 1
+            const row1 = document.createElement("div");
+            row1.style.cssText = "display: flex; align-items: center; justify-content: space-between; width: 100%;";
+            
+            const label = document.createElement("span");
+            label.innerText = layer.name;
+            label.style.cssText = "color: #eee; font-size: 11px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 6px; cursor: pointer;";
+            label.title = "Double-click to rename";
+            
+            label.ondblclick = (e) => {
+                e.stopPropagation();
+                
+                const input = document.createElement("input");
+                input.type = "text";
+                input.value = layer.name;
+                input.style.cssText = "background: #2a2a2f; color: #fff; border: 1px solid #33789a; border-radius: 3px; font-size: 11px; padding: 2px 4px; width: 100%; box-sizing: border-box; font-family: inherit; font-weight: bold; outline: none; margin: 0;";
+                
+                row1.replaceChild(input, label);
+                input.focus();
+                input.select();
+                
+                let finished = false;
+                const finishRename = () => {
+                    if (finished) return;
+                    finished = true;
+                    const val = input.value.trim();
+                    if (val) {
+                        layer.name = val;
+                    }
+                    renderLayersList();
+                    pushCrHistory();
+                };
+                
+                input.onblur = finishRename;
+                input.onkeydown = (evt) => {
+                    if (evt.key === "Enter") {
+                        evt.preventDefault();
+                        finishRename();
+                    } else if (evt.key === "Escape") {
+                        evt.preventDefault();
+                        finished = true;
+                        renderLayersList();
+                    }
+                    evt.stopPropagation();
+                };
+                
+                input.onclick = (evt) => evt.stopPropagation();
+                input.onmousedown = (evt) => evt.stopPropagation();
+            };
+            
+            const btns = document.createElement("div");
+            btns.style.cssText = "display: flex; gap: 4px; align-items: center;";
+            
+            // Eye Button
+            const eyeBtn = document.createElement("button");
+            eyeBtn.innerHTML = "👁";
+            eyeBtn.title = layer.visible ? "Hide Layer" : "Show Layer";
+            eyeBtn.style.cssText = `
+                background: none; border: none;
+                color: #eee;
+                opacity: ${layer.visible ? "1" : "0.25"};
+                cursor: pointer; padding: 2px 4px; font-size: 12px;
+                display: flex; align-items: center; justify-content: center;
+                transition: opacity 0.1s, color 0.1s;
+            `;
+            eyeBtn.onmouseenter = () => { eyeBtn.style.color = "#33789a"; };
+            eyeBtn.onmouseleave = () => { eyeBtn.style.color = "#eee"; };
+            eyeBtn.onclick = (e) => {
+                e.stopPropagation();
+                layer.visible = !layer.visible;
+                pushCrHistory();
+                scheduleRender();
+                renderLayersList();
+            };
+            
+            // Blend Mode Button
+            const blendBtn = document.createElement("button");
+            blendBtn.innerHTML = "❐";
+            blendBtn.title = "Blending Mode: " + (blendModes.find(m => m.value === layer.blendMode)?.label || "Normal");
+            blendBtn.style.cssText = "background: none; border: none; color: #aaa; cursor: pointer; padding: 2px 4px; font-size: 12px; display: flex; align-items: center; justify-content: center; transition: color 0.1s;";
+            blendBtn.onmouseenter = () => blendBtn.style.color = "#fff";
+            blendBtn.onmouseleave = () => blendBtn.style.color = "#aaa";
+            blendBtn.onclick = (e) => {
+                e.stopPropagation();
+                const existingMenu = document.getElementById("trix-blend-menu");
+                if (existingMenu) existingMenu.remove();
+                
+                const menu = document.createElement("div");
+                menu.id = "trix-blend-menu";
+                menu.style.cssText = `
+                    position: absolute;
+                    background: #18181c;
+                    border: 1px solid #3d3d42;
+                    border-radius: 4px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                    z-index: 10002;
+                    max-height: 250px;
+                    overflow-y: auto;
+                    padding: 4px 0;
+                    min-width: 120px;
+                `;
+                const rect = blendBtn.getBoundingClientRect();
+                menu.style.top = `${rect.bottom + window.scrollY + 4}px`;
+                menu.style.left = `${rect.left + window.scrollX}px`;
+                
+                blendModes.forEach(mode => {
+                    const item = document.createElement("div");
+                    item.innerText = mode.label;
+                    item.style.cssText = `
+                        padding: 6px 12px;
+                        cursor: pointer;
+                        color: ${layer.blendMode === mode.value ? "#33789a" : "#eee"};
+                        font-size: 11px;
+                        font-weight: ${layer.blendMode === mode.value ? "bold" : "normal"};
+                        transition: background 0.1s;
+                    `;
+                    item.onmouseenter = () => item.style.background = "#2a2a30";
+                    item.onmouseleave = () => item.style.background = "transparent";
+                    item.onclick = (evt) => {
+                        evt.stopPropagation();
+                        layer.blendMode = mode.value;
+                        blendBtn.title = "Blending Mode: " + mode.label;
+                        menu.remove();
+                        pushCrHistory();
+                        scheduleRender();
+                        renderLayersList();
+                    };
+                    menu.appendChild(item);
+                });
+                document.body.appendChild(menu);
+                const closeMenu = () => {
+                    menu.remove();
+                    document.removeEventListener("click", closeMenu);
+                };
+                setTimeout(() => { document.addEventListener("click", closeMenu); }, 10);
+            };
+            
+            // Delete Button
+            const delBtn = document.createElement("button");
+            delBtn.innerHTML = "✕";
+            delBtn.title = "Delete Layer";
+            delBtn.style.cssText = `
+                background: none; border: none;
+                color: #eee;
+                opacity: ${layers.length > 1 ? "0.6" : "0.1"};
+                cursor: ${layers.length > 1 ? "pointer" : "default"};
+                padding: 2px 4px; font-size: 11px;
+                display: flex; align-items: center; justify-content: center;
+                transition: opacity 0.1s, color 0.1s;
+            `;
+            if (layers.length > 1) {
+                delBtn.onmouseenter = () => { delBtn.style.color = "#ff4757"; delBtn.style.opacity = "1"; };
+                delBtn.onmouseleave = () => { delBtn.style.color = "#eee"; delBtn.style.opacity = "0.6"; };
+                delBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete layer "${layer.name}"?`)) {
+                        layers.splice(idx, 1);
+                        if (selectedLayerIndex >= layers.length) {
+                            selectedLayerIndex = layers.length - 1;
+                        }
+                        state = layers[selectedLayerIndex].state;
+                        hslState = layers[selectedLayerIndex].hslState;
+                        curvesState = layers[selectedLayerIndex].curvesState;
+                        updateRightPanelUI();
+                        renderLayersList();
+                        pushCrHistory();
+                        scheduleRender();
+                    }
+                };
+            }
+            
+            btns.append(eyeBtn, blendBtn, delBtn);
+            row1.append(label, btns);
+            
+            // Row 2: Opacity
+            const opacityRow = document.createElement("div");
+            opacityRow.style.cssText = "display: flex; align-items: center; gap: 8px; margin-top: 6px; width: 100%; box-sizing: border-box;";
+            
+            const slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = "0";
+            slider.max = "100";
+            slider.value = layer.opacity;
+            slider.style.cssText = "flex: 1; height: 4px; accent-color: #33789a; cursor: pointer; margin: 0;";
+            
+            const percent = document.createElement("span");
+            percent.innerText = layer.opacity + "%";
+            percent.style.cssText = "color: #888; font-size: 10px; min-width: 28px; text-align: right;";
+            
+            slider.oninput = (e) => {
+                layer.opacity = parseInt(e.target.value);
+                percent.innerText = layer.opacity + "%";
+                scheduleRender();
+            };
+            slider.onchange = () => {
+                pushCrHistory();
+            };
+            
+            // Avoid drag conflict
+            [slider, eyeBtn, blendBtn, delBtn].forEach(el => {
+                el.addEventListener("mousedown", (e) => {
+                    e.stopPropagation();
+                    block.draggable = false;
+                });
+                el.addEventListener("mouseup", () => { block.draggable = true; });
+                el.addEventListener("mouseleave", () => { block.draggable = true; });
+            });
+            
+            opacityRow.append(slider, percent);
+            block.append(row1, opacityRow);
+            
+            // Drag and Drop
+            block.addEventListener("dragstart", (e) => {
+                e.dataTransfer.setData("text/plain", idx);
+                block.style.opacity = "0.4";
+            });
+            block.addEventListener("dragend", () => {
+                block.style.opacity = "1";
+            });
+            block.addEventListener("dragover", (e) => {
+                e.preventDefault();
+            });
+            block.addEventListener("drop", (e) => {
+                e.preventDefault();
+                const srcIdx = parseInt(e.dataTransfer.getData("text/plain"));
+                const destIdx = idx;
+                if (srcIdx !== destIdx && !isNaN(srcIdx)) {
+                    const [moved] = layers.splice(srcIdx, 1);
+                    layers.splice(destIdx, 0, moved);
+                    if (selectedLayerIndex === srcIdx) {
+                        selectedLayerIndex = destIdx;
+                    } else if (selectedLayerIndex > srcIdx && selectedLayerIndex <= destIdx) {
+                        selectedLayerIndex--;
+                    } else if (selectedLayerIndex < srcIdx && selectedLayerIndex >= destIdx) {
+                        selectedLayerIndex++;
+                    }
+                    state = layers[selectedLayerIndex].state;
+                    hslState = layers[selectedLayerIndex].hslState;
+                    curvesState = layers[selectedLayerIndex].curvesState;
+                    updateRightPanelUI();
+                    renderLayersList();
+                    pushCrHistory();
+                    scheduleRender();
+                }
+            });
+            
+            layersListContainer.appendChild(block);
+        }
+        
+        layersListContainer.appendChild(layersButtonsRow);
+    };
+
+    addLayerBtn.onclick = () => {
+        const newLayer = {
+            id: "layer_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+            name: "Layer " + (layers.length + 1),
+            visible: true,
+            opacity: 100,
+            blendMode: "source-over",
+            state: JSON.parse(JSON.stringify(defaultCrState)),
+            hslState: JSON.parse(JSON.stringify(defaultHslState)),
+            curvesState: ensureCurveState(JSON.parse(JSON.stringify(defaultCurvesState)))
+        };
+        layers.push(newLayer);
+        selectedLayerIndex = layers.length - 1;
+        state = layers[selectedLayerIndex].state;
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        updateRightPanelUI();
+        renderLayersList();
+        pushCrHistory();
+        scheduleRender();
+    };
+
+    duplicateLayerBtn.onclick = () => {
+        if (selectedLayerIndex < 0 || selectedLayerIndex >= layers.length) return;
+        const srcLayer = layers[selectedLayerIndex];
+        
+        const duplicatedLayer = {
+            id: "layer_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+            name: srcLayer.name + " Copy",
+            visible: srcLayer.visible,
+            opacity: srcLayer.opacity,
+            blendMode: srcLayer.blendMode,
+            state: JSON.parse(JSON.stringify(srcLayer.state)),
+            hslState: JSON.parse(JSON.stringify(srcLayer.hslState)),
+            curvesState: ensureCurveState(JSON.parse(JSON.stringify(srcLayer.curvesState)))
+        };
+        
+        const targetIndex = selectedLayerIndex + 1;
+        layers.splice(targetIndex, 0, duplicatedLayer);
+        selectedLayerIndex = targetIndex;
+        state = layers[selectedLayerIndex].state;
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        
+        updateRightPanelUI();
+        renderLayersList();
+        pushCrHistory();
+        scheduleRender();
+    };
+
+    let layersPanelOpen = false;
+    layersNotch.onclick = () => {
+        layersPanelOpen = !layersPanelOpen;
+        if (layersPanelOpen) {
+            layersPanel.style.width = "220px";
+            layersPanel.style.minWidth = "220px";
+            layersPanel.style.borderRight = "1px solid #333";
+        } else {
+            layersPanel.style.width = "0px";
+            layersPanel.style.minWidth = "0px";
+            layersPanel.style.borderRight = "0px solid #333";
+        }
+        onResize();
+    };
+    layersPanel.addEventListener("transitionend", () => {
+        onResize();
+    });
 
     const workspace = document.createElement("div");
     workspace.style.cssText = `
@@ -662,33 +1291,6 @@ export function openTrixCameraRawEditor(node) {
     // ==============================================================================
     // PRESETS SYSTEM PANEL
     // ==============================================================================
-    const defaultCrState = {
-        cr_offset: 0, cr_exp: 0, cr_cont: 0, cr_high: 0, cr_shad: 0, cr_white: 0, cr_black: 0,
-        cr_temp: 0, cr_tint: 0, cr_vibrance: 0, cr_colorfulness: 0, cr_sat: 0,
-        cr_tex: 0, cr_clar: 0, cr_dehz: 0, cr_sharp: 0, cr_denoise: 0,
-        cr_blur: 0, cr_surface_blur: 0, cr_grain: 0, cr_vignette: 0,
-        cr_sketch_kernel_size: 0, cr_sketch_sigma: 1.4, cr_sketch_k_sigma: 1.6, cr_sketch_epsilon: -0.03, cr_sketch_phi: 10.0, cr_sketch_gamma: 1.0, cr_sketch_color: 'gray',
-        cr_pixel_colors: 128, cr_pixel_dot_size: 0, cr_pixel_outline: 0, cr_pixel_smoothing: 0, cr_pixel_algo: 'kmeans'
-    };
-
-    const defaultHslState = {
-        colorize: false,
-        activeChannel: 'master',
-        master:   { h: 0, s: 0, l: 0 },
-        reds:     { h: 0, s: 0, l: 0, center: 0, width: 60 },
-        yellows:  { h: 0, s: 0, l: 0, center: 60, width: 60 },
-        greens:   { h: 0, s: 0, l: 0, center: 120, width: 60 },
-        cyans:    { h: 0, s: 0, l: 0, center: 180, width: 60 },
-        blues:    { h: 0, s: 0, l: 0, center: 240, width: 60 },
-        magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
-    };
-
-    const defaultCurvesState = {
-        rgb: [{x:0, y:0}, {x:255, y:255}],
-        r:   [{x:0, y:0}, {x:255, y:255}],
-        g:   [{x:0, y:0}, {x:255, y:255}],
-        b:   [{x:0, y:0}, {x:255, y:255}]
-    };
 
     const builtInPresets = [
         {
@@ -798,9 +1400,13 @@ export function openTrixCameraRawEditor(node) {
             newState.cr_vibrance = preset.state.cr_colorfulness;
         }
 
-        state = newState;
-        hslState = newHslState;
-        curvesState = newCurvesState;
+        layers[selectedLayerIndex].state = newState;
+        layers[selectedLayerIndex].hslState = newHslState;
+        layers[selectedLayerIndex].curvesState = newCurvesState;
+        state = layers[selectedLayerIndex].state;
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        renderLayersList();
         
         for (const key in state) {
             const iEl = document.getElementById(`cr_input_${key}`);
@@ -1163,7 +1769,11 @@ export function openTrixCameraRawEditor(node) {
     };
 
     const pushCrHistory = () => {
-        const currentStateStr = JSON.stringify({ state, hslState, curvesState });
+        const snapshot = {
+            layers: JSON.parse(JSON.stringify(layers)),
+            selectedLayerIndex: selectedLayerIndex
+        };
+        const currentStateStr = JSON.stringify(snapshot);
         if (crHistory[crHistoryIdx] === currentStateStr) return; 
         crHistory = crHistory.slice(0, crHistoryIdx + 1);
         crHistory.push(currentStateStr);
@@ -1175,19 +1785,17 @@ export function openTrixCameraRawEditor(node) {
     const applyHistoryState = (idx) => {
         if (idx < 0 || idx >= crHistory.length) return;
         crHistoryIdx = idx;
-        const saved = JSON.parse(crHistory[crHistoryIdx]);
-        state = saved.state || state;
-        hslState = saved.hslState || hslState;
-        curvesState = ensureCurveState(saved.curvesState || curvesState);
+        const snapshot = JSON.parse(crHistory[crHistoryIdx]);
         
-        for (const key in state) {
-            const iEl = document.getElementById(`cr_input_${key}`);
-            const sEl = document.getElementById(`cr_slider_${key}`);
-            if (iEl) iEl.value = state[key];
-            if (sEl) sEl.value = state[key];
-        }
-        updateHslUI();
-        updateCurvesUI();
+        layers = snapshot.layers;
+        selectedLayerIndex = snapshot.selectedLayerIndex;
+        
+        state = layers[selectedLayerIndex].state;
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        
+        updateRightPanelUI();
+        renderLayersList();
         updateHistoryBtns();
         scheduleRender();
     };
@@ -1750,6 +2358,9 @@ export function openTrixCameraRawEditor(node) {
 
     const updateCurvesUI = () => {
         curvesState = ensureCurveState(curvesState);
+        if (layers && layers[selectedLayerIndex]) {
+            layers[selectedLayerIndex].curvesState = curvesState;
+        }
         curveChannelSelect.value = curvesState.activeChannel;
         drawCurvesUI();
     };
@@ -1853,14 +2464,17 @@ export function openTrixCameraRawEditor(node) {
 
     resetCrBtn.onclick = () => {
         for (const key in state) { state[key] = 0; }
-        hslState = {
+        layers[selectedLayerIndex].hslState = {
             colorize: false, activeChannel: 'master', 
             master: { h: 0, s: 0, l: 0 }, reds: { h: 0, s: 0, l: 0, center: 0, width: 60 },
             yellows: { h: 0, s: 0, l: 0, center: 60, width: 60 }, greens: { h: 0, s: 0, l: 0, center: 120, width: 60 },
             cyans: { h: 0, s: 0, l: 0, center: 180, width: 60 }, blues: { h: 0, s: 0, l: 0, center: 240, width: 60 },
             magentas: { h: 0, s: 0, l: 0, center: 300, width: 60 }
         };
-        curvesState = createDefaultCurveState();
+        layers[selectedLayerIndex].curvesState = createDefaultCurveState();
+        hslState = layers[selectedLayerIndex].hslState;
+        curvesState = layers[selectedLayerIndex].curvesState;
+        renderLayersList();
         hslFingerActive = false;
         fingerBtn.style.background = "#222";
         fingerBtn.style.color = "#aaa";
@@ -1896,15 +2510,69 @@ export function openTrixCameraRawEditor(node) {
     saveDiskBtn.onmouseenter = () => { saveDiskBtn.style.background = "#333a45"; };
     saveDiskBtn.onmouseleave = () => { saveDiskBtn.style.background = "#2a2a2f"; };
 
+    const bakeLayers = (hqW, hqH, parentFilterStr, scaleRatio) => {
+        const mainCvs = document.createElement("canvas");
+        mainCvs.width = hqW; mainCvs.height = hqH;
+        const mainCtx = mainCvs.getContext("2d", { willReadFrequently: true });
+        
+        // Create base image source canvas (with parent filter)
+        const baseCvs = document.createElement("canvas");
+        baseCvs.width = hqW; baseCvs.height = hqH;
+        const baseCtx = baseCvs.getContext("2d");
+        baseCtx.filter = parentFilterStr || "none";
+        baseCtx.drawImage(origImgObj, 0, 0, hqW, hqH);
+        baseCtx.filter = "none";
+        const baseData = baseCtx.getImageData(0, 0, hqW, hqH).data;
+
+        // In filter mode, draw base image initially
+        if (layersMode === "filter") {
+            mainCtx.drawImage(baseCvs, 0, 0);
+        }
+        
+        // Offscreen layer canvas
+        const layerCvs = document.createElement("canvas");
+        layerCvs.width = hqW; layerCvs.height = hqH;
+        const layerCtx = layerCvs.getContext("2d", { willReadFrequently: true });
+        
+        let firstVisible = true;
+        for (let i = 0; i < layers.length; i++) {
+            const layer = layers[i];
+            if (!layer.visible) continue;
+            
+            layerCtx.clearRect(0, 0, hqW, hqH);
+            
+            let inputData;
+            if (layersMode === "filter") {
+                inputData = mainCtx.getImageData(0, 0, hqW, hqH).data;
+            } else {
+                inputData = baseData;
+            }
+            
+            const imgData = new ImageData(hqW, hqH);
+            processPixels(inputData, imgData.data, hqW, hqH, layer.state, layer.hslState, layer.curvesState);
+            layerCtx.putImageData(imgData, 0, 0);
+            applySpatialStages(layerCtx, hqW, hqH, layer.state, scaleRatio);
+            
+            mainCtx.globalAlpha = layer.opacity / 100;
+            if (firstVisible && layersMode === "image") {
+                mainCtx.globalCompositeOperation = "source-over";
+                firstVisible = false;
+            } else {
+                mainCtx.globalCompositeOperation = layer.blendMode || "source-over";
+            }
+            mainCtx.drawImage(layerCvs, 0, 0);
+        }
+        mainCtx.globalAlpha = 1.0;
+        mainCtx.globalCompositeOperation = "source-over";
+        
+        return mainCvs;
+    };
+
     saveDiskBtn.onclick = () => {
         saveDiskBtn.innerText = "Processing...";
         setTimeout(() => {
             const hqW = origImgObj.naturalWidth;
             const hqH = origImgObj.naturalHeight;
-            
-            const tCvs = document.createElement("canvas");
-            tCvs.width = hqW; tCvs.height = hqH;
-            const tCtx = tCvs.getContext("2d", { willReadFrequently: true });
             
             let parentFilterStr = "";
             if (node.inputs) {
@@ -1925,22 +2593,10 @@ export function openTrixCameraRawEditor(node) {
                 }
             }
 
-            tCtx.filter = parentFilterStr || "none";
-            tCtx.drawImage(origImgObj, 0, 0, hqW, hqH);
-            tCtx.filter = "none";
-            
-            const srcImgData = tCtx.getImageData(0, 0, hqW, hqH);
-            const outImgData = tCtx.createImageData(hqW, hqH);
-            
-            processPixels(srcImgData.data, outImgData.data, hqW, hqH, state, hslState, curvesState);
-            tCtx.putImageData(outImgData, 0, 0);
-            
-            const blur = state.cr_blur;
             const scaleRatio = hqW / pW; 
+            const bakedCvs = bakeLayers(hqW, hqH, parentFilterStr, scaleRatio);
 
-            applySpatialStages(tCtx, hqW, hqH, state, scaleRatio);
-
-            tCvs.toBlob(async (blob) => {
+            bakedCvs.toBlob(async (blob) => {
                 if (!blob) { console.error("Failed to create blob for saving"); return; }
                 const filename = `trix_camera_raw_HQ_${Date.now()}.png`;
                 
@@ -2021,6 +2677,10 @@ export function openTrixCameraRawEditor(node) {
         if (wCurveData) wCurveData.value = JSON.stringify(ensureCurveState(curvesState));
         if (wCurveActive) wCurveActive.value = curveHasAdjustments(curvesState);
 
+        if (!node.properties) node.properties = {};
+        node.properties.trix_layers = JSON.stringify(layers);
+        node.properties.trix_layers_mode = layersMode;
+
         if (node.syncHTMLRef) node.syncHTMLRef();
         if (node.updateUIRef) node.updateUIRef();
         if (app.graph) app.graph.setDirtyCanvas(true, true);
@@ -2032,7 +2692,7 @@ export function openTrixCameraRawEditor(node) {
         saveToNodeBtn.innerText = "Saving...";
         
         setTimeout(() => {
-            const imgWidget = node.widgets ? node.widgets.find(w => w.name === "image") : null;
+            const imgWidget = node.widgets ? node.widgets.find(w => w && (w.name === "image" || w.name === "image_path")) : null;
             let nextVersion = (node._trix_image_version || 0) + 1;
             if (imgWidget && imgWidget.value) {
                 const match = imgWidget.value.match(/_(\d+)\.[a-zA-Z0-9]+$/);
@@ -2046,10 +2706,6 @@ export function openTrixCameraRawEditor(node) {
             const filename = trixCropFilename(node.id, nextVersion);
             const hqW = origImgObj.naturalWidth;
             const hqH = origImgObj.naturalHeight;
-            
-            const tCvs = document.createElement("canvas");
-            tCvs.width = hqW; tCvs.height = hqH;
-            const tCtx = tCvs.getContext("2d", { willReadFrequently: true });
             
             let parentFilterStr = "";
             if (node.inputs) {
@@ -2070,123 +2726,136 @@ export function openTrixCameraRawEditor(node) {
                 }
             }
 
-            tCtx.filter = parentFilterStr || "none";
-            tCtx.drawImage(origImgObj, 0, 0, hqW, hqH);
-            tCtx.filter = "none";
+            const scaleRatio = hqW / pW;
+            const bakedCvs = bakeLayers(hqW, hqH, parentFilterStr, scaleRatio);
             
-            const srcImgData = tCtx.getImageData(0, 0, hqW, hqH);
-            const outImgData = tCtx.createImageData(hqW, hqH);
+            // Create the mask canvas (grayscale)
+            const mCvs = document.createElement("canvas");
+            mCvs.width = hqW;
+            mCvs.height = hqH;
+            const mCtx = mCvs.getContext("2d");
+            mCtx.fillStyle = "black";
+            mCtx.fillRect(0, 0, hqW, hqH);
             
-            processPixels(srcImgData.data, outImgData.data, hqW, hqH, state, hslState, curvesState);
-            tCtx.putImageData(outImgData, 0, 0);
-            
-            const blur = state.cr_blur;
-            const scaleRatio = hqW / pW; 
+            if (savedMaskCanvas) {
+                mCtx.drawImage(savedMaskCanvas, 0, 0, hqW, hqH);
+            }
 
-            applySpatialStages(tCtx, hqW, hqH, state, scaleRatio);
-
-            tCvs.toBlob(async (blob) => {
-                if (!blob) {
-                    console.error("Failed to create blob for saving");
+            bakedCvs.toBlob((imgBlob) => {
+                if (!imgBlob) {
+                    console.error("Failed to create image blob");
                     saveToNodeBtn.disabled = false;
                     saveToNodeBtn.innerText = "Save to Node";
                     return;
                 }
-                
-                try {
-                    const file = new File([blob], filename, { type: "image/png" });
-                    const body = new FormData();
-                    body.append("image", file, filename);
-                    body.append("filename", filename);
-                    body.append("type", "input");
-                    const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
-                    body.append("subfolder", isAio ? TRIX_AIO_SUBFOLDER : "");
-                    body.append("overwrite", "true");
-                    const saveEveryStep = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStep", false);
-                    const saveEveryStepPath = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStepPath", "input/aio_input");
-                    body.append("save_every_step", saveEveryStep ? "true" : "false");
-                    body.append("save_every_step_path", saveEveryStepPath);
-                    
-                    const uploadResp = await fetch("/trix/save_image_with_mask", { method: "POST", body: body });
-                    if (uploadResp.status === 200) {
-                        const uploadData = await uploadResp.json();
-                        const fullPath = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
-                        
-                        node._trix_image_version = nextVersion;
-                        const imgWidget = node.widgets.find(w => w.name === "image");
-                        if (imgWidget) {
-                            node._isChangingImage = true;
-                            if (imgWidget.options && Array.isArray(imgWidget.options.values) && !imgWidget.options.values.includes(fullPath)) {
-                                imgWidget.options.values.unshift(fullPath);
-                            }
-                            imgWidget.value = fullPath;
-                            if (imgWidget.callback) imgWidget.callback(fullPath);
-                        }
+                mCvs.toBlob(async (maskBlob) => {
+                    if (!maskBlob) {
+                        console.error("Failed to create mask blob");
+                        saveToNodeBtn.disabled = false;
+                        saveToNodeBtn.innerText = "Save to Node";
+                        return;
+                    }
+                    try {
+                        const imgFile = new File([imgBlob], filename, { type: "image/png" });
+                        const maskFile = new File([maskBlob], "mask.png", { type: "image/png" });
+                        const body = new FormData();
+                        body.append("image", imgFile, filename);
+                        body.append("mask", maskFile, "mask.png");
+                        body.append("filename", filename);
+                        body.append("type", "input");
+                        const isAio = node && (node.comfyClass === "TrixLoadImageAIO" || node.type === "TrixLoadImageAIO");
+                        body.append("subfolder", isAio ? TRIX_AIO_SUBFOLDER : "");
+                        body.append("overwrite", "true");
+                        const saveEveryStep = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStep", false);
+                        const saveEveryStepPath = typeof app !== "undefined" && app.ui && app.ui.settings && app.ui.settings.getSettingValue("Trix AIO Tools.Save Steps.SaveEveryStepPath", "input/aio_input");
+                        body.append("save_every_step", saveEveryStep ? "true" : "false");
+                        body.append("save_every_step_path", saveEveryStepPath);
 
-                        // Reset all Camera Raw settings on the node since they are now baked into the image
-                        for (const key in state) {
-                            const w = getW(key);
-                            if (w) {
-                                if (key === "cr_pixel_algo") {
-                                    w.value = "kmeans";
-                                } else if (key === "cr_sketch_color") {
-                                    w.value = "gray";
-                                } else {
-                                    w.value = 0;
+                        const uploadResp = await fetch("/trix/save_image_with_mask", { method: "POST", body: body });
+                        if (uploadResp.status === 200) {
+                            const uploadData = await uploadResp.json();
+                            const fullPath = uploadData.subfolder ? `${uploadData.subfolder}/${uploadData.name}` : uploadData.name;
+                            
+                            node._trix_image_version = nextVersion;
+                            const imgWidget = node.widgets ? node.widgets.find(w => w && (w.name === "image" || w.name === "image_path")) : null;
+                            if (imgWidget) {
+                                node._isChangingImage = true;
+                                if (imgWidget.options && Array.isArray(imgWidget.options.values) && !imgWidget.options.values.includes(fullPath)) {
+                                    imgWidget.options.values.unshift(fullPath);
+                                }
+                                imgWidget.value = fullPath;
+                                if (imgWidget.callback) imgWidget.callback(fullPath);
+                            }
+
+                            // Reset all Camera Raw settings on the node since they are now baked into the image
+                            for (const key in state) {
+                                const w = getW(key);
+                                if (w) {
+                                    if (key === "cr_pixel_algo") {
+                                        w.value = "kmeans";
+                                    } else if (key === "cr_sketch_color") {
+                                        w.value = "gray";
+                                    } else {
+                                        w.value = 0;
+                                    }
                                 }
                             }
+                            
+                            const crE = getW("cr_enable");
+                            if (crE) crE.value = false;
+                            if (node._checkboxCREnable) node._checkboxCREnable.checked = false;
+                            
+                            const wHslData = getW("hsl_data");
+                            const wHslActive = getW("hsl_active");
+                            if (wHslData) wHslData.value = "{}";
+                            if (wHslActive) wHslActive.value = false;
+                            
+                            const wCurveData = getW("curve_data");
+                            const wCurveActive = getW("curve_active");
+                            if (wCurveData) wCurveData.value = "{}";
+                            if (wCurveActive) wCurveActive.value = false;
+
+                            if (!node.properties) node.properties = {};
+                            node.properties.trix_layers = null;
+                            node.properties.trix_layers_mode = null;
+
+                            const modeWidget = getW("mode");
+                            if (modeWidget) modeWidget.value = "Filter";
+                            node._showCameraRawMenu = false; 
+
+                            if (node.syncHTMLRef) node.syncHTMLRef();
+                            if (node.updateUIRef) node.updateUIRef();
+                            if (app.graph) app.graph.setDirtyCanvas(true, true);
+                            closeEditor();
+
+                            setTimeout(() => {
+                                if (app.graph) {
+                                    app.graph._nodes.forEach(n => {
+                                        if (typeof n.pullLivePreviewRef === "function") {
+                                            n.pullLivePreviewRef();
+                                        }
+                                    });
+                                }
+                            }, 150);
+                        } else {
+                            throw new Error(`Upload failed: ${uploadResp.status}`);
                         }
-                        const crE = getW("cr_enable");
-                        if (crE) crE.value = false;
-                        if (node._checkboxCREnable) node._checkboxCREnable.checked = false;
-                        
-                        const wHslData = getW("hsl_data");
-                        const wHslActive = getW("hsl_active");
-                        if (wHslData) wHslData.value = "{}";
-                        if (wHslActive) wHslActive.value = false;
-                        
-                        const wCurveData = getW("curve_data");
-                        const wCurveActive = getW("curve_active");
-                        if (wCurveData) wCurveData.value = "{}";
-                        if (wCurveActive) wCurveActive.value = false;
-
-                        const modeWidget = getW("mode");
-                        if (modeWidget) modeWidget.value = "Filter";
-                        node._showCameraRawMenu = false; 
-
-                        if (node.syncHTMLRef) node.syncHTMLRef();
-                        if (node.updateUIRef) node.updateUIRef();
-                        if (app.graph) app.graph.setDirtyCanvas(true, true);
-                        closeEditor();
-
-                        // Notify downstream nodes to pull the updated preview/image in real-time
-                        setTimeout(() => {
-                            if (app.graph) {
-                                app.graph._nodes.forEach(n => {
-                                    if (typeof n.pullLivePreviewRef === "function") {
-                                        n.pullLivePreviewRef();
-                                    }
-                                });
-                            }
-                        }, 150);
-                    } else {
-                        throw new Error(`Upload failed: ${uploadResp.status}`);
+                    } catch (e) {
+                        console.error("Save to Node upload failed", e);
+                        alert("Failed to save image to node: " + e);
+                        saveToNodeBtn.disabled = false;
+                        saveToNodeBtn.innerText = "Save to Node";
                     }
-                } catch (e) {
-                    console.error("Save to Node upload failed", e);
-                    alert("Failed to save image to node: " + e);
-                    saveToNodeBtn.disabled = false;
-                    saveToNodeBtn.innerText = "Save to Node";
-                }
+                }, "image/png");
             }, "image/png");
         }, 50);
     };
 
     actionsWrapper.append(cancelBtn, btnRow);
-    btnRow.append(saveDiskBtn, saveSettingsBtn, saveToNodeBtn);
+    btnRow.append(saveDiskBtn, saveToNodeBtn);
     sidebar.appendChild(actionsWrapper);
     mainArea.append(toolbar, workspace);
-    overlay.append(mainArea, sidebar);
+    overlay.append(layersPanel, mainArea, sidebar);
     document.body.appendChild(overlay);
 
     const isPotato = app.ui.settings.getSettingValue("Trix AIO Tools. Potato PC Mode.Enabled", false);
@@ -2237,6 +2906,7 @@ export function openTrixCameraRawEditor(node) {
         
         updateHslUI();
         updateCurvesUI();
+        renderLayersList();
 
         setTimeout(() => {
             centerImage();
@@ -2244,29 +2914,71 @@ export function openTrixCameraRawEditor(node) {
         }, 50);
     };
 
+    let layerCanvas = null;
+    let layerCtx = null;
+    const getLayerCanvas = (w, h) => {
+        if (!layerCanvas) {
+            layerCanvas = document.createElement("canvas");
+            layerCtx = layerCanvas.getContext("2d", { willReadFrequently: true });
+        }
+        if (layerCanvas.width !== w || layerCanvas.height !== h) {
+            layerCanvas.width = w;
+            layerCanvas.height = h;
+        }
+        return { canvas: layerCanvas, ctx: layerCtx };
+    };
+
     const renderPixels = (renderOriginal = false, fastMode = false) => {
         if (!baseImgData) return;
 
-        const activeState = renderOriginal ? {
-            cr_exp: 0, cr_cont: 0, cr_high: 0, cr_shad: 0, cr_white: 0, cr_black: 0, 
-            cr_temp: 0, cr_tint: 0, cr_colorfulness: 0, cr_sat: 0, cr_tex: 0, 
-            cr_clar: 0, cr_dehz: 0, cr_grain: 0, cr_sharp: 0, cr_blur: 0, cr_vignette: 0
-        } : state;
+        if (renderOriginal) {
+            const imgData = new ImageData(new Uint8ClampedArray(baseImgData), pW, pH);
+            ctx.putImageData(imgData, 0, 0);
+            drawWorkspace();
+            return;
+        }
 
-        const activeHslState = renderOriginal ? {
-            colorize: false, master: {h:0,s:0,l:0}, reds: {h:0,s:0,l:0}, yellows: {h:0,s:0,l:0},
-            greens: {h:0,s:0,l:0}, cyans: {h:0,s:0,l:0}, blues: {h:0,s:0,l:0}, magentas: {h:0,s:0,l:0}
-        } : hslState;
-        const activeCurvesState = renderOriginal ? createDefaultCurveState() : curvesState;
+        ctx.fillStyle = "rgba(0,0,0,0)";
+        ctx.clearRect(0, 0, pW, pH);
 
-        const imgData = new ImageData(pW, pH);
-        
-        processPixels(baseImgData, imgData.data, pW, pH, activeState, activeHslState, activeCurvesState);
+        // In filter mode, start by drawing the base image initially
+        if (layersMode === "filter") {
+            const imgData = new ImageData(new Uint8ClampedArray(baseImgData), pW, pH);
+            ctx.putImageData(imgData, 0, 0);
+        }
 
-        ctx.putImageData(imgData, 0, 0);
-        
-        applySpatialStages(ctx, pW, pH, activeState, 1);
-        
+        let firstVisible = true;
+        for (let i = 0; i < layers.length; i++) {
+            const layer = layers[i];
+            if (!layer.visible) continue;
+
+            const { canvas: lCvs, ctx: lCtx } = getLayerCanvas(pW, pH);
+            lCtx.clearRect(0, 0, pW, pH);
+
+            let inputData;
+            if (layersMode === "filter") {
+                inputData = ctx.getImageData(0, 0, pW, pH).data;
+            } else {
+                inputData = baseImgData;
+            }
+
+            const imgData = new ImageData(pW, pH);
+            processPixels(inputData, imgData.data, pW, pH, layer.state, layer.hslState, layer.curvesState);
+            lCtx.putImageData(imgData, 0, 0);
+            applySpatialStages(lCtx, pW, pH, layer.state, 1);
+
+            ctx.globalAlpha = layer.opacity / 100;
+            if (firstVisible && layersMode === "image") {
+                ctx.globalCompositeOperation = "source-over";
+                firstVisible = false;
+            } else {
+                ctx.globalCompositeOperation = layer.blendMode || "source-over";
+            }
+            ctx.drawImage(lCvs, 0, 0);
+        }
+        ctx.globalAlpha = 1.0;
+        ctx.globalCompositeOperation = "source-over";
+
         drawWorkspace();
     };
 

@@ -3,13 +3,117 @@ import { api } from "../../../scripts/api.js";
 import { openTrixCameraRawEditor } from './trix_camera_raw.js';
 import { openTrixCropEditor } from './trix_crop_editor.js';
 import { openTrixMaskEditor } from './trix_mask_editor.js';
+import { openTrixCamrawBox } from './camraw_box.js';
+import { openTrixMaskBox } from './mask_box.js';
+import { openTrixCropBox } from './crop_box.js';
 
+function recolorCanvas(canvas, newColor) {
+    if (!canvas || canvas.width === 0 || canvas.height === 0) return;
+    const ctx = canvas.getContext("2d");
+    const tempCvs = document.createElement("canvas");
+    tempCvs.width = canvas.width;
+    tempCvs.height = canvas.height;
+    const tempCtx = tempCvs.getContext("2d");
+    tempCtx.drawImage(canvas, 0, 0);
+    tempCtx.globalCompositeOperation = "source-in";
+    tempCtx.fillStyle = newColor;
+    tempCtx.fillRect(0, 0, tempCvs.width, tempCvs.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(tempCvs, 0, 0);
+}
+
+const allTrixNodes = [];
+const generateTrixUUID = () => Math.random().toString(36).substring(2) + Date.now().toString(36);
+
+const isUUIDInUse = (uuid, excludeNode) => {
+    if (!uuid) return false;
+    if (typeof allTrixNodes === "undefined") return false;
+    return allTrixNodes.some(n => {
+        if (n === excludeNode) return false;
+        const uWgt = n.widgets ? n.widgets.find(w => w.name === "trix_uuid") : null;
+        return uWgt && uWgt.value === uuid;
+    });
+};
+
+const startTrixVisibilityLoop = () => {
+    const checkVisibility = () => {
+        try {
+            if (typeof app !== "undefined" && app.graph && typeof allTrixNodes !== "undefined") {
+                for (const node of allTrixNodes) {
+                    if (!node || !node.wrapperRef) continue;
+                    const activeNodeInGraph = app.graph.getNodeById(node.id);
+                    const isActive = (activeNodeInGraph === node);
+                    
+                    const shouldBeVisible = isActive && !node.flags.collapsed;
+                    const parent = node.wrapperRef.parentNode;
+                    
+                    if (shouldBeVisible) {
+                        if (node.wrapperRef.style.display === "none") {
+                            node.wrapperRef.style.display = "";
+                        }
+                        if (parent && parent.style && parent.style.display === "none") {
+                            parent.style.display = "";
+                        }
+                        if (parent && parent.style && parent.style.pointerEvents === "none") {
+                            parent.style.pointerEvents = "auto";
+                        }
+                    } else {
+                        if (node.wrapperRef.style.display !== "none") {
+                            node.wrapperRef.style.display = "none";
+                        }
+                        if (parent && parent.style && parent.style.display !== "none") {
+                            parent.style.display = "none";
+                        }
+                        if (parent && parent.style && parent.style.pointerEvents !== "none") {
+                            parent.style.pointerEvents = "none";
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("TrixLoader visibility check error:", err);
+        }
+        requestAnimationFrame(checkVisibility);
+    };
+    requestAnimationFrame(checkVisibility);
+};
+startTrixVisibilityLoop();
+
+const trixIsInputWired = (node, inputName = "in_image") => {
+    if (!node || !node.inputs) return false;
+    const inp = node.inputs.find(slot => slot && slot.name === inputName);
+    if (!inp || inp.link === null || inp.link === undefined) return false;
+    if (typeof app === "undefined" || !app.graph || !app.graph.links) return false;
+    const linkInfo = app.graph.links[inp.link];
+    return !!(linkInfo && linkInfo.target_id === node.id && node.inputs[linkInfo.target_slot] === inp);
+};
+
+api.addEventListener("executed", (event) => {
+    const { node, output } = event.detail;
+    if (!node || !output) return;
+    const n = typeof app !== "undefined" && app.graph ? app.graph.getNodeById(node) : null;
+    if (!n || n.comfyClass !== "TrixLoadImageAIO") return;
+    const localUuid = n.widgets ? n.widgets.find(w => w.name === "trix_uuid")?.value : null;
+    if (localUuid && output.trix_uuid !== localUuid) {
+        event.stopImmediatePropagation();
+        event.preventDefault();
+    }
+}, true);
 
 api.addEventListener("trix-update-preview", (event) => {
-    const { id, images } = event.detail;
-    const node = app.graph.getNodeById(id);
+    const { id, images, trix_uuid } = event.detail;
+    let node = null;
+    if (trix_uuid && typeof allTrixNodes !== "undefined") {
+        node = allTrixNodes.find(n => {
+            const uWgt = n.widgets ? n.widgets.find(w => w.name === "trix_uuid") : null;
+            return uWgt && uWgt.value === trix_uuid;
+        });
+    }
+    if (!node) {
+        node = app.graph.getNodeById(id);
+    }
     if (node && node.onExecuted) {
-        node.onExecuted({ images });
+        node.onExecuted({ images, trix_uuid });
     }
 });
 
@@ -19,42 +123,72 @@ const svgUpload = `<svg viewBox="0 0 24 24" width="11.2" height="11.2" fill="non
 const svgChevronLeft = `<svg viewBox="0 0 12 12" width="9" height="9" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M8.2 1.1 3.1 6l5.1 4.9V1.1Z"></path></svg>`;
 const svgChevronRight = `<svg viewBox="0 0 12 12" width="9" height="9" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M3.8 1.1 8.9 6l-5.1 4.9V1.1Z"></path></svg>`;
 
-const TRIX_BG = "#202024";
-const TRIX_PANEL = "#252529";
-const TRIX_PANEL_SOFT = "rgba(32, 32, 36, 0.92)";
-const TRIX_CONTROL = "#2e2e33";
-const TRIX_CONTROL_HOVER = "#393941";
-const TRIX_BORDER = "#424248";
-const TRIX_NODE_OUTLINE = "#35343c";
-const TRIX_NODE_RADIUS = 8;
-const TRIX_HEADER_OFFSET_Y = -5; // Custom image picker vertical offset. Change by 1-3px if old native lines peek through.
-const TRIX_TEXT = "#e7e7ea";
-const TRIX_MUTED = "#a9a9b0";
-const TRIX_ACCENT = "#33789a";
-const TRIX_ACCENT_HOVER = "#3f8eb4";
-const TRIX_ACTIVE = "rgb(246, 103, 68)";
+let TRIX_BG = "#303540";
+let TRIX_MASK_TOOLBAR_BG = "#303540";
+let TRIX_MASK_TOOLBAR_ICON_BG = "#2e333d";
+let TRIX_NODE_BORDER_WIDTH = 1;
+let TRIX_PANEL = "#252529";
+let TRIX_PANEL_SOFT = "rgba(32, 32, 36, 0.92)";
+let TRIX_CONTROL = "#2e2e33";
+let TRIX_CONTROL_HOVER = "#393941";
+let TRIX_BORDER = "#424248";
+let TRIX_NODE_OUTLINE = "#35343c";
+let TRIX_NODE_RADIUS = 8;
+let TRIX_HEADER_OFFSET_Y = -5; // Custom image picker vertical offset. Change by 1-3px if old native lines peek through.
+let TRIX_TEXT = "#e7e7ea";
+let TRIX_ICON_COLOR = "#cccccc";
+let TRIX_MUTED = "#a9a9b0";
+let TRIX_ACCENT = "#33789a";
+let TRIX_ACCENT_HOVER = "#3f8eb4";
+let TRIX_ACTIVE = "rgb(246, 103, 68)";
+let TRIX_ACTIVE_HOVER = "rgb(255, 115, 80)";
 const TRIX_IMAGE_TOOLBAR_GAP = 8; // Gap under the toolbar before the image; raise/lower by 1px if Mask touches the preview.
 const TRIX_DISPLAY_TITLE = "🌊Load Image AIO";
 const TRIX_AIO_SUBFOLDER = "aio_input";
 
+const adjustColorBrightness = (col, percent) => {
+    if (!col || typeof col !== "string") return col;
+    let hex = col.trim();
+    if (hex.startsWith("rgb")) {
+        try {
+            const match = hex.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+            if (match) {
+                let R = parseInt(match[1], 10);
+                let G = parseInt(match[2], 10);
+                let B = parseInt(match[3], 10);
+                R = Math.max(0, Math.min(255, Math.round(R * (100 + percent) / 100)));
+                G = Math.max(0, Math.min(255, Math.round(G * (100 + percent) / 100)));
+                B = Math.max(0, Math.min(255, Math.round(B * (100 + percent) / 100)));
+                return `rgb(${R}, ${G}, ${B})`;
+            }
+        } catch (e) {}
+        return col;
+    }
+    if (!hex.startsWith("#")) {
+        hex = "#" + hex;
+    }
+    if (hex.length !== 7) return col;
+    try {
+        let R = parseInt(hex.substring(1, 3), 16);
+        let G = parseInt(hex.substring(3, 5), 16);
+        let B = parseInt(hex.substring(5, 7), 16);
+
+        R = Math.max(0, Math.min(255, Math.round(R * (100 + percent) / 100)));
+        G = Math.max(0, Math.min(255, Math.round(G * (100 + percent) / 100)));
+        B = Math.max(0, Math.min(255, Math.round(B * (100 + percent) / 100)));
+
+        const rHex = R.toString(16).padStart(2, '0');
+        const gHex = G.toString(16).padStart(2, '0');
+        const bHex = B.toString(16).padStart(2, '0');
+
+        return `#${rHex}${gHex}${bHex}`;
+    } catch(e) {
+        return col;
+    }
+};
+
 const applyTrixNodeChrome = (node) => {
-    if (!node) return;
-    if (!Object.getOwnPropertyDescriptor(node, "color") || Object.getOwnPropertyDescriptor(node, "color").get === undefined) {
-        Object.defineProperty(node, "color", {
-            get: function() { return TRIX_NODE_OUTLINE; },
-            set: function(v) {},
-            configurable: true,
-            enumerable: true
-        });
-    }
-    if (!Object.getOwnPropertyDescriptor(node, "bgcolor") || Object.getOwnPropertyDescriptor(node, "bgcolor").get === undefined) {
-        Object.defineProperty(node, "bgcolor", {
-            get: function() { return TRIX_BG; },
-            set: function(v) {},
-            configurable: true,
-            enumerable: true
-        });
-    }
+    node.boxcolor = "rgba(0,0,0,0)";
 };
 
 const refreshTrixOutputs = (node) => {
@@ -79,8 +213,7 @@ const refreshTrixOutputs = (node) => {
     }
     
     // Check if in_image input is connected
-    const inImageLink = node.inputs ? node.inputs.find(inp => inp && inp.name === "in_image") : null;
-    const isWired = inImageLink && inImageLink.link !== null;
+    const isWired = trixIsInputWired(node);
     
     if (node.outputs[2]) {
         if (isWired) {
@@ -130,14 +263,18 @@ const trixImageExt = (name = "", mime = "") => {
 const trixAioFilename = (kind, nodeId, originalName = "", mime = "") => {
     const id = trixSafeId(nodeId);
     const ext = trixImageExt(originalName, mime);
-    if (kind === "paste") return `aio_pasted_${id}${ext}`;
+    if (kind === "paste") return `pasted_${id}${ext}`;
     if (kind === "crop") return `aio_crop_${id}.png`;
     const stem = trixSafeStem(originalName, "image");
     return `aio_upload_${id}_${stem}${ext}`;
 };
-const trixAppendAioUploadFields = (body) => {
+const trixAppendAioUploadFields = (body, filename = "") => {
     body.append("type", "input");
-    body.append("subfolder", TRIX_AIO_SUBFOLDER);
+    if (filename && filename.startsWith("pasted_")) {
+        body.append("subfolder", "");
+    } else {
+        body.append("subfolder", TRIX_AIO_SUBFOLDER);
+    }
     body.append("overwrite", "true");
 };
 const trixAioFullPath = (data) => data?.subfolder ? `${data.subfolder}/${data.name}` : data?.name;
@@ -165,31 +302,1337 @@ const getMaskHistoryLimit = (canvas) => {
     return 15;
 };
 
+let settingCopyImage = { value: true };
+let settingPasteImage = { value: true };
+let settingCopyMask = { value: true };
+let settingPasteMask = { value: true };
+let settingToolboxAdvMask = { value: true };
+let settingToolboxAdvCrop = { value: true };
+let settingToolboxAdvCamraw = { value: true };
+let settingContextMenuAdvMask = { value: true };
+let settingContextMenuAdvCrop = { value: true };
+let settingContextMenuAdvCamraw = { value: true };
+
+let settingNodeBg = { value: "#202024" };
+let settingNodeBorder = { value: "#35343c" };
+let settingButtonDefault = { value: "#33789a" };
+let settingButtonActive = { value: "#f66744" };
+
+const trixPreloadAndExecute = (node, callback) => {
+    let srcImg = null;
+    if (node.image && node.image.complete && node.image.naturalWidth > 0) {
+        srcImg = node.image;
+    } else if (node.imgs && node.imgs.length > 0) {
+        const firstImg = node.imgs[0];
+        if (firstImg && firstImg.complete && firstImg.naturalWidth > 0) {
+            srcImg = firstImg;
+        }
+    } else if (node.imgTagRef && node.imgTagRef.complete && node.imgTagRef.naturalWidth > 0) {
+        srcImg = node.imgTagRef;
+    }
+
+    const imgWidget = node.widgets?.find(w => w && (w.name === "image" || w.name === "image_path"));
+
+    const execute = (img) => {
+        const maskCanvas = trixExtractMaskFromImage(img);
+        callback(node, img, maskCanvas);
+    };
+
+    if (srcImg && srcImg.complete && srcImg.naturalWidth > 0) {
+        execute(srcImg);
+    } else if (imgWidget && imgWidget.value) {
+        const tempImg = new Image();
+        tempImg.crossOrigin = "anonymous";
+        tempImg.onload = () => execute(tempImg);
+        tempImg.onerror = () => alert("Failed to load node image for editing.");
+        
+        let type = "input";
+        if (imgWidget.options && imgWidget.options.type) {
+            type = imgWidget.options.type;
+        }
+        tempImg.src = `/view?filename=${encodeURIComponent(imgWidget.value)}&type=${type}&t=${Date.now()}`;
+    } else {
+        alert("No image found on this node to edit.");
+    }
+};
+
+const trixExtractMaskFromImage = (srcImg) => {
+    if (!srcImg || !srcImg.naturalWidth) return null;
+    const w = srcImg.naturalWidth;
+    const h = srcImg.naturalHeight;
+
+    const cvs = document.createElement("canvas");
+    cvs.width = w;
+    cvs.height = h;
+    const ctx = cvs.getContext("2d");
+    ctx.drawImage(srcImg, 0, 0);
+
+    try {
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+        let hasAlpha = false;
+
+        for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] < 255) {
+                hasAlpha = true;
+                break;
+            }
+        }
+
+        if (!hasAlpha) return null;
+
+        const maskCvs = document.createElement("canvas");
+        maskCvs.width = w;
+        maskCvs.height = h;
+        const maskCtx = maskCvs.getContext("2d");
+        const maskData = maskCtx.createImageData(w, h);
+
+        for (let i = 0; i < data.length; i += 4) {
+            const maskVal = 255 - data[i + 3];
+            maskData.data[i] = maskVal;
+            maskData.data[i + 1] = maskVal;
+            maskData.data[i + 2] = maskVal;
+            maskData.data[i + 3] = 255;
+        }
+        maskCtx.putImageData(maskData, 0, 0);
+        return maskCvs;
+    } catch (e) {
+        console.error("Failed to extract mask from image:", e);
+        return null;
+    }
+};
+
+const wrapNodeGetExtraMenuOptions = (nodeType) => {
+    if (!nodeType) return;
+    if (nodeType.class) {
+        nodeType = nodeType.class;
+    }
+    if (!nodeType || !nodeType.prototype) return;
+    if (nodeType.prototype.__trix_menu_wrapped) return;
+    nodeType.prototype.__trix_menu_wrapped = true;
+    
+    const origGetExtraMenuOptions = nodeType.prototype.getExtraMenuOptions;
+    nodeType.prototype.getExtraMenuOptions = function(canvas, options) {
+        if (origGetExtraMenuOptions) {
+            origGetExtraMenuOptions.apply(this, arguments);
+        } else {
+            const baseGet = LiteGraph.LGraphNode.prototype.getExtraMenuOptions;
+            if (baseGet) baseGet.apply(this, arguments);
+        }
+        
+        // Skip for TrixLoadImageAIO because it has its own custom menu logic
+        if (this.type === "TrixLoadImageAIO") {
+            return;
+        }
+        
+        // Skip if we already added Trix options to this menu (avoid duplicates)
+        if (options && options.__trix_added) {
+            return;
+        }
+        if (options) {
+            options.__trix_added = true;
+        }
+        
+        let srcImg = null;
+        if (this.image && this.image.complete && this.image.naturalWidth > 0) {
+            srcImg = this.image;
+        } else if (this.imgs && this.imgs.length > 0) {
+            const firstImg = this.imgs[0];
+            if (firstImg && firstImg.complete && firstImg.naturalWidth > 0) {
+                srcImg = firstImg;
+            }
+        } else if (this.imgTagRef && this.imgTagRef.complete && this.imgTagRef.naturalWidth > 0) {
+            srcImg = this.imgTagRef;
+        }
+        
+        const imgWidget = this.widgets?.find(w => w.name === "image" || w.name === "image_path");
+        const showCopyImage = settingCopyImage.value;
+        const showCopyMask = settingCopyMask.value;
+        const showPasteImage = settingPasteImage.value;
+        const showPasteMask = settingPasteMask.value;
+
+        if (srcImg || (imgWidget && imgWidget.value)) {
+            if (showCopyImage || showCopyMask) {
+                options.push(null); // separator
+                
+                // Copy Image
+                if (showCopyImage) {
+                    options.push({
+                        content: "☐ Copy Image",
+                        callback: () => {
+                            const doCopy = (imgElement) => {
+                                try {
+                                    const tCanvas = document.createElement("canvas");
+                                    tCanvas.width = imgElement.naturalWidth || imgElement.width;
+                                    tCanvas.height = imgElement.naturalHeight || imgElement.height;
+                                    const tCtx = tCanvas.getContext("2d");
+                                    tCtx.drawImage(imgElement, 0, 0);
+                                    tCanvas.toBlob(async (blob) => {
+                                        if (blob) {
+                                            await navigator.clipboard.write([
+                                                new ClipboardItem({ "image/png": blob })
+                                            ]);
+                                        }
+                                    }, "image/png");
+                                } catch (err) {
+                                    console.error("Copy Image Error:", err);
+                                    alert("Failed to copy image: " + err);
+                                }
+                            };
+                            
+                            if (srcImg) {
+                                doCopy(srcImg);
+                            } else if (imgWidget && imgWidget.value) {
+                                const tempImg = new Image();
+                                tempImg.crossOrigin = "anonymous";
+                                tempImg.onload = () => doCopy(tempImg);
+                                tempImg.onerror = () => alert("Failed to load image for copying.");
+                                tempImg.src = `/view?filename=${encodeURIComponent(imgWidget.value)}&type=input`;
+                            }
+                        }
+                    });
+                }
+                
+                // Copy Mask
+                if (showCopyMask) {
+                    options.push({
+                        content: "⚇ Copy Mask",
+                        callback: () => {
+                            const doCopyMask = (imgElement) => {
+                                try {
+                                    const tCanvas = document.createElement("canvas");
+                                    tCanvas.width = imgElement.naturalWidth || imgElement.width;
+                                    tCanvas.height = imgElement.naturalHeight || imgElement.height;
+                                    const tCtx = tCanvas.getContext("2d");
+                                    tCtx.drawImage(imgElement, 0, 0);
+                                    
+                                    const imgData = tCtx.getImageData(0, 0, tCanvas.width, tCanvas.height);
+                                    const data = imgData.data;
+                                    
+                                    let hasAlpha = false;
+                                    for (let i = 0; i < data.length; i += 4) {
+                                        if (data[i + 3] < 255) {
+                                            hasAlpha = true;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    for (let i = 0; i < data.length; i += 4) {
+                                        const maskVal = hasAlpha ? (255 - data[i + 3]) : Math.max(data[i], data[i + 1], data[i + 2]);
+                                        data[i] = maskVal;     // R
+                                        data[i + 1] = maskVal; // G
+                                        data[i + 2] = maskVal; // B
+                                        data[i + 3] = 255;     // A
+                                    }
+                                    
+                                    tCtx.putImageData(imgData, 0, 0);
+                                    tCanvas.toBlob(async (blob) => {
+                                        if (blob) {
+                                            await navigator.clipboard.write([
+                                                new ClipboardItem({ "image/png": blob })
+                                            ]);
+                                        }
+                                    }, "image/png");
+                                } catch (err) {
+                                    console.error("Copy Mask Error:", err);
+                                    alert("Failed to copy mask: " + err);
+                                }
+                            };
+                            
+                            if (srcImg) {
+                                doCopyMask(srcImg);
+                            } else if (imgWidget && imgWidget.value) {
+                                const tempImg = new Image();
+                                tempImg.crossOrigin = "anonymous";
+                                tempImg.onload = () => doCopyMask(tempImg);
+                                tempImg.onerror = () => alert("Failed to load image for copying mask.");
+                                tempImg.src = `/view?filename=${encodeURIComponent(imgWidget.value)}&type=input`;
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        
+        if (imgWidget) {
+            // Paste Image
+            if (showPasteImage) {
+                options.push({
+                    content: "■ Paste Image",
+                    callback: async () => {
+                        try {
+                            const items = await navigator.clipboard.read();
+                            for (let item of items) {
+                                if (item.types.some(t => t.startsWith('image/'))) {
+                                    const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
+                                    let ext = ".png";
+                                    if (blob.type === "image/jpeg") ext = ".jpg";
+                                    else if (blob.type === "image/webp") ext = ".webp";
+                                    
+                                    const filename = `pasted_${this.id}_${Date.now()}${ext}`;
+                                    const newFile = new File([blob], filename, { type: blob.type || "image/png" });
+                                    
+                                    const body = new FormData();
+                                    body.append("image", newFile, filename);
+                                    body.append("type", "input");
+                                    body.append("overwrite", "true");
+                                    
+                                    const resp = await fetch("/upload/image", { method: "POST", body: body });
+                                    if (resp.status === 200) {
+                                        const data = await resp.json();
+                                        const finalName = data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
+                                        imgWidget.value = finalName;
+                                        if (imgWidget.callback) {
+                                            imgWidget.callback(finalName);
+                                        }
+                                        this.setDirtyCanvas?.(true, true);
+                                    }
+                                    break;
+                                }
+                            }
+                        } catch (err) {
+                            alert("Failed to paste image: " + err);
+                        }
+                    }
+                });
+            }
+            
+            // Paste Mask
+            if (showPasteMask) {
+                options.push({
+                    content: "⚉ Paste Mask",
+                    callback: async () => {
+                        if (!imgWidget.value) {
+                            alert("No base image in this node to apply a mask onto.");
+                            return;
+                        }
+                        try {
+                            const items = await navigator.clipboard.read();
+                            let maskBlob = null;
+                            for (let item of items) {
+                                if (item.types.some(t => t.startsWith('image/'))) {
+                                    maskBlob = await item.getType(item.types.find(t => t.startsWith('image/')));
+                                    break;
+                                }
+                            }
+                            
+                            if (!maskBlob) {
+                                alert("Clipboard does not contain an image/mask.");
+                                return;
+                            }
+                            
+                            const applyMaskToImage = (baseImgElement) => {
+                                const maskImg = new Image();
+                                maskImg.onload = () => {
+                                    const tCanvas = document.createElement("canvas");
+                                    tCanvas.width = baseImgElement.naturalWidth || baseImgElement.width;
+                                    tCanvas.height = baseImgElement.naturalHeight || baseImgElement.height;
+                                    const tCtx = tCanvas.getContext("2d");
+                                    tCtx.drawImage(maskImg, 0, 0, tCanvas.width, tCanvas.height);
+                                    
+                                    const maskData = tCtx.getImageData(0, 0, tCanvas.width, tCanvas.height);
+                                    for (let i = 0; i < maskData.data.length; i += 4) {
+                                        const mr = maskData.data[i];
+                                        const mg = maskData.data[i + 1];
+                                        const mb = maskData.data[i + 2];
+                                        const ma = maskData.data[i + 3];
+                                        const maskVal = Math.round(Math.max(mr, mg, mb) * (ma / 255));
+                                        maskData.data[i + 3] = 255 - maskVal;
+                                    }
+                                    tCtx.putImageData(maskData, 0, 0);
+                                    
+                                    tCanvas.toBlob(async (newBlob) => {
+                                        if (newBlob) {
+                                            let baseFilename = imgWidget.value;
+                                            let subfolder = "";
+                                            const parts = baseFilename.split("/");
+                                            if (parts.length > 1) {
+                                                baseFilename = parts.pop();
+                                                subfolder = parts.join("/");
+                                            }
+                                            
+                                            const original_ref = {
+                                                filename: baseFilename,
+                                                subfolder: subfolder,
+                                                type: "input"
+                                            };
+                                            
+                                            const filename = `masked_${this.id}_${Date.now()}.png`;
+                                            const newFile = new File([newBlob], filename, { type: "image/png" });
+                                            const body = new FormData();
+                                            body.append("image", newFile, filename);
+                                            body.append("type", "input");
+                                            body.append("original_ref", JSON.stringify(original_ref));
+                                            body.append("overwrite", "true");
+                                            
+                                            const resp = await fetch("/upload/mask", { method: "POST", body: body });
+                                            if (resp.status === 200) {
+                                                const data = await resp.json();
+                                                const finalName = data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
+                                                imgWidget.value = finalName;
+                                                if (imgWidget.callback) {
+                                                    imgWidget.callback(finalName);
+                                                }
+                                                this.setDirtyCanvas?.(true, true);
+                                            }
+                                        }
+                                    }, "image/png");
+                                };
+                                maskImg.src = URL.createObjectURL(maskBlob);
+                            };
+                            
+                            if (srcImg) {
+                                applyMaskToImage(srcImg);
+                            } else {
+                                const baseImg = new Image();
+                                baseImg.crossOrigin = "anonymous";
+                                baseImg.onload = () => applyMaskToImage(baseImg);
+                                baseImg.onerror = () => alert("Failed to load base image from node.");
+                                baseImg.src = `/view?filename=${encodeURIComponent(imgWidget.value)}&type=input`;
+                            }
+                        } catch (err) {
+                            alert("Failed to paste mask: " + err);
+                        }
+                    }
+                });
+            }
+
+            const showAdvMask = settingContextMenuAdvMask.value;
+            const showAdvCamraw = settingContextMenuAdvCamraw.value;
+            const showAdvCrop = settingContextMenuAdvCrop.value;
+            
+            if (showAdvMask || showAdvCamraw || showAdvCrop) {
+                options.push(null); // separator
+                
+                if (showAdvMask) {
+                    options.push({
+                        content: "✦ Trix Mask Editor",
+                        callback: () => {
+                            trixPreloadAndExecute(this, openTrixMaskBox);
+                        }
+                    });
+                }
+                if (showAdvCamraw) {
+                    options.push({
+                        content: "◩ Trix Camera Raw",
+                        callback: () => {
+                            trixPreloadAndExecute(this, openTrixCamrawBox);
+                        }
+                    });
+                }
+                if (showAdvCrop) {
+                    options.push({
+                        content: "⛶ Trix Crop/Pad/Outpaint",
+                        callback: () => {
+                            trixPreloadAndExecute(this, openTrixCropBox);
+                        }
+                    });
+                }
+            }
+        }
+    };
+};
+
 app.registerExtension({
     name: "Trix.LoadImageAIO",
-    async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name === "TrixLoadImageAIO") {
-            Object.defineProperty(nodeType.prototype, "color", {
-                get: function() { return TRIX_NODE_OUTLINE; },
-                set: function(v) {},
-                configurable: true,
-                enumerable: true
+    async setup(app) {
+        let syncPreviewColors = null;
+        const style = document.createElement("style");
+        style.innerText = `
+            .trix-potato-pc, .trix-potato-pc * {
+                transition: none !important;
+                animation: none !important;
+            }
+        `;
+        document.head.appendChild(style);
+
+
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools. Potato PC Mode.Enabled",
+            name: "🥔 Potato PC Mode (Low resolution & fast loading)",
+            defaultValue: false,
+            type: "boolean"
+        });
+
+        settingCopyImage = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Context Menu Show/Hide.CopyImage",
+            name: "🌊 Context Menu: Copy Image",
+            defaultValue: true,
+            type: "boolean"
+        });
+        settingPasteImage = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Context Menu Show/Hide.PasteImage",
+            name: "🌊 Context Menu: Paste Image",
+            defaultValue: true,
+            type: "boolean"
+        });
+        settingCopyMask = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Context Menu Show/Hide.CopyMask",
+            name: "🌊 Context Menu: Copy Mask",
+            defaultValue: true,
+            type: "boolean"
+        });
+        settingPasteMask = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Context Menu Show/Hide.PasteMask",
+            name: "🌊 Context Menu: Paste Mask",
+            defaultValue: true,
+            type: "boolean"
+        });
+        settingContextMenuAdvMask = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Context Menu Show/Hide.AdvMask",
+            name: "🌊 Context Menu: trx adv. mask editor",
+            defaultValue: true,
+            type: "boolean"
+        });
+        settingContextMenuAdvCamraw = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Context Menu Show/Hide.AdvCamraw",
+            name: "🌊 Context Menu: trx adv. camera raw",
+            defaultValue: true,
+            type: "boolean"
+        });
+        settingContextMenuAdvCrop = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Context Menu Show/Hide.AdvCrop",
+            name: "🌊 Context Menu: trx adv. crop/pad/outpaint",
+            defaultValue: true,
+            type: "boolean"
+        });
+
+        settingToolboxAdvMask = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Toolbox.AdvMask",
+            name: "🌊 trx adv. mask editor",
+            defaultValue: true,
+            type: "boolean"
+        });
+        settingToolboxAdvCamraw = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Toolbox.AdvCamraw",
+            name: "🌊 trx adv. camera raw",
+            defaultValue: true,
+            type: "boolean"
+        });
+        settingToolboxAdvCrop = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Toolbox.AdvCrop",
+            name: "🌊 trx adv. crop/pad/outpaint",
+            defaultValue: true,
+            type: "boolean"
+        });
+
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Toolbox.Order",
+            name: "🌊 Toolbox Order (Drag to rearrange)",
+            defaultValue: "trix.camraw_box,trix.mask_box,trix.crop_box",
+            type: "text"
+        });
+
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Toolbox.Shift",
+            name: "🌊 Toolbox Position Shift (Shift tools left/right)",
+            defaultValue: 0,
+            type: "number"
+        });
+
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Save Steps.SaveEveryStep",
+            name: "💾 Save every editing step",
+            defaultValue: false,
+            type: "boolean"
+        });
+
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Save Steps.SaveEveryStepPath",
+            name: "💾 Save step path",
+            defaultValue: "input/aio_input",
+            type: "text"
+        });
+
+        const setupVisualOrderEditor = (input) => {
+            if (input.nextSibling && input.nextSibling.classList && input.nextSibling.classList.contains("trix-visual-order")) {
+                return;
+            }
+            input.style.setProperty("display", "none", "important");
+            
+            const container = document.createElement("div");
+            container.className = "trix-visual-order";
+            container.style.cssText = `
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                background: #111;
+                border: 1px solid #333;
+                border-radius: 8px;
+                padding: 6px 12px;
+                margin-top: 4px;
+                user-select: none;
+                width: fit-content;
+            `;
+            
+            const toolDetails = {
+                "trix.mask_box": { icon: "✦", label: "Mask Ed." },
+                "trix.camraw_box": { icon: "◩", label: "CamRaw" },
+                "trix.crop_box": { icon: "⛶", label: "Crop Ed." }
+            };
+            
+            const renderOrder = () => {
+                container.innerHTML = "";
+                const orderStr = input.value || "trix.camraw_box,trix.mask_box,trix.crop_box";
+                const items = orderStr.split(",").filter(Boolean);
+                
+                items.forEach((itemId, index) => {
+                    const detail = toolDetails[itemId];
+                    if (!detail) return;
+                    
+                    const itemEl = document.createElement("div");
+                    itemEl.draggable = true;
+                    itemEl.dataset.id = itemId;
+                    itemEl.style.cssText = `
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                        padding: 6px 10px;
+                        background: #202024;
+                        border: 1px solid #444;
+                        border-radius: 4px;
+                        cursor: grab;
+                        font-size: 11px;
+                        font-weight: bold;
+                        color: #eee;
+                        transition: background 0.2s, border-color 0.2s;
+                    `;
+                    
+                    const iconEl = document.createElement("span");
+                    iconEl.innerText = detail.icon;
+                    iconEl.style.color = "#00bfff";
+                    iconEl.style.fontSize = "13px";
+                    
+                    const labelEl = document.createElement("span");
+                    labelEl.innerText = detail.label;
+                    
+                    itemEl.append(iconEl, labelEl);
+                    
+                    itemEl.ondragstart = (e) => {
+                        e.dataTransfer.setData("text/plain", index);
+                        itemEl.style.opacity = "0.5";
+                        itemEl.style.borderColor = "#00bfff";
+                    };
+                    itemEl.ondragend = () => {
+                        itemEl.style.opacity = "1";
+                        itemEl.style.borderColor = "#444";
+                        renderOrder();
+                    };
+                    itemEl.ondragover = (e) => {
+                        e.preventDefault();
+                        itemEl.style.background = "#333a45";
+                    };
+                    itemEl.ondragleave = () => {
+                        itemEl.style.background = "#202024";
+                    };
+                    itemEl.ondrop = (e) => {
+                        e.preventDefault();
+                        const srcIndex = parseInt(e.dataTransfer.getData("text/plain"), 10);
+                        if (isNaN(srcIndex) || srcIndex === index) return;
+                        
+                        const newItems = [...items];
+                        const [removed] = newItems.splice(srcIndex, 1);
+                        newItems.splice(index, 0, removed);
+                        
+                        const newValue = newItems.join(",");
+                        input.value = newValue;
+                        
+                        input.dispatchEvent(new Event("change", { bubbles: true }));
+                        input.dispatchEvent(new Event("input", { bubbles: true }));
+                        
+                        renderOrder();
+                    };
+                    
+                    container.appendChild(itemEl);
+                });
+            };
+            
+            renderOrder();
+            input.parentNode.appendChild(container);
+        };
+
+        const setupVisualShiftSlider = (input) => {
+            if (input.nextSibling && input.nextSibling.classList && input.nextSibling.classList.contains("trix-visual-shift-wrapper")) {
+                return;
+            }
+            input.style.setProperty("display", "none", "important");
+            
+            const wrapper = document.createElement("div");
+            wrapper.className = "trix-visual-shift-wrapper";
+            wrapper.style.cssText = `
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                margin-top: 4px;
+                max-width: 520px;
+            `;
+            
+            const sliderRow = document.createElement("div");
+            sliderRow.style.cssText = `
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            `;
+            
+            const slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = "0";
+            slider.max = "9";
+            slider.value = input.value || "0";
+            slider.style.cssText = `
+                flex: 1;
+                cursor: pointer;
+                accent-color: #00bfff;
+            `;
+            
+            const labelVal = document.createElement("span");
+            labelVal.style.cssText = `
+                font-size: 11px;
+                font-weight: bold;
+                color: #00bfff;
+                width: 140px;
+                text-align: right;
+            `;
+            
+            const positionLabels = [
+                "0: Left (Before Trash)",
+                "1: After Trash",
+                "2: After Divider 1",
+                "3: After Info",
+                "4: After Color",
+                "5: After Sliders",
+                "6: After Mask settings",
+                "7: After Divider 2",
+                "8: After Undo",
+                "9: Right (Before More)"
+            ];
+            
+            const updateLabel = (val) => {
+                labelVal.innerText = positionLabels[val] || `Position ${val}`;
+            };
+            
+            slider.oninput = () => {
+                const val = parseInt(slider.value, 10);
+                updateLabel(val);
+                input.value = val;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+            };
+            
+            updateLabel(parseInt(slider.value, 10));
+            sliderRow.append(slider, labelVal);
+            wrapper.appendChild(sliderRow);
+            input.parentNode.appendChild(wrapper);
+        };
+
+        const settingsObserver = new MutationObserver(() => {
+            const orderInput = document.querySelector('input[id*="Trix AIO Tools.Toolbox.Order"]');
+            if (orderInput && !orderInput.dataset.trixInitialized) {
+                orderInput.dataset.trixInitialized = "true";
+                setupVisualOrderEditor(orderInput);
+            }
+            
+            const shiftInput = document.querySelector('input[id*="Trix AIO Tools.Toolbox.Shift"]');
+            if (shiftInput && !shiftInput.dataset.trixInitialized) {
+                shiftInput.dataset.trixInitialized = "true";
+                setupVisualShiftSlider(shiftInput);
+            }
+        });
+        settingsObserver.observe(document.body, { childList: true, subtree: true });
+
+        const updateColorSettings = () => {
+            TRIX_BG = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .NodeBg", "#303540") || "#303540";
+            TRIX_NODE_OUTLINE = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .NodeBorder", "#35343c") || "#35343c";
+            TRIX_ACCENT = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .ButtonDefault", "#33789a") || "#33789a";
+            TRIX_ACTIVE = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .ButtonActive", "#dd7055") || "#dd7055";
+            TRIX_TEXT = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .TextColor", "#e7e7ea") || "#e7e7ea";
+            TRIX_ICON_COLOR = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .IconColor", "#cccccc") || "#cccccc";
+            TRIX_MASK_TOOLBAR_BG = TRIX_BG;
+            TRIX_MASK_TOOLBAR_ICON_BG = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .MaskToolbarIconBg", "#2e333d") || "#2e333d";
+            const borderVal = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .NodeBorderWidth", 1);
+            TRIX_NODE_BORDER_WIDTH = (borderVal !== undefined && borderVal !== null) ? Number(borderVal) : 1;
+            if (isNaN(TRIX_NODE_BORDER_WIDTH)) TRIX_NODE_BORDER_WIDTH = 1;
+
+            // Derive hover, soft panel, control backgrounds, and border colors
+            TRIX_ACCENT_HOVER = adjustColorBrightness(TRIX_ACCENT, 20);
+            TRIX_ACTIVE_HOVER = adjustColorBrightness(TRIX_ACTIVE, 10);
+            TRIX_PANEL = TRIX_BG;
+            TRIX_PANEL_SOFT = TRIX_BG;
+            TRIX_CONTROL = adjustColorBrightness(TRIX_BG, 10);
+            TRIX_CONTROL_HOVER = adjustColorBrightness(TRIX_BG, 20);
+            TRIX_BORDER = adjustColorBrightness(TRIX_BG, 30);
+
+            // Update CSS variables for DOM rendering
+            const root = document.documentElement;
+            root.style.setProperty("--trix-bg", TRIX_BG);
+            root.style.setProperty("--trix-panel-soft", TRIX_PANEL_SOFT);
+            root.style.setProperty("--trix-control", TRIX_CONTROL);
+            root.style.setProperty("--trix-border", TRIX_BORDER);
+            root.style.setProperty("--trix-border-width", `${TRIX_NODE_BORDER_WIDTH}px`);
+            root.style.setProperty("--trix-accent", TRIX_ACCENT);
+            root.style.setProperty("--trix-active", TRIX_ACTIVE);
+            root.style.setProperty("--trix-text", TRIX_TEXT);
+            root.style.setProperty("--trix-mask-toolbar-bg", TRIX_MASK_TOOLBAR_BG);
+            root.style.setProperty("--trix-mask-toolbar-icon-bg", TRIX_MASK_TOOLBAR_ICON_BG);
+            root.style.setProperty("--trix-icon", TRIX_ICON_COLOR);
+            root.style.setProperty("--trix-accent-hover", TRIX_ACCENT_HOVER);
+            root.style.setProperty("--trix-active-hover", TRIX_ACTIVE_HOVER);
+            root.style.setProperty("--trix-control-hover", TRIX_CONTROL_HOVER);
+
+            if (typeof syncPreviewColors === "function") {
+                syncPreviewColors();
+            }
+
+            // Redraw graph and update any active nodes
+            if (app.graph) {
+                app.graph._nodes.forEach(node => {
+                    if (node.type === "TrixLoadImageAIO" || node.comfyClass === "TrixLoadImageAIO") {
+                        if (node.updateUIRef) {
+                            node.updateUIRef(true);
+                        }
+                    }
+                });
+                app.graph.setDirtyCanvas(true, true);
+            }
+        };
+
+        settingNodeBg = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Trix Loader node color .NodeBg",
+            name: "🎨 Customization Node Colors: Node Background (Hex)",
+            defaultValue: "#303540",
+            type: "text",
+            onChange(val) {
+                updateColorSettings();
+            }
+        });
+        settingNodeBorder = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Trix Loader node color .NodeBorder",
+            name: "🎨 Customization Node Colors: Node Border (Hex)",
+            defaultValue: "#35343c",
+            type: "text",
+            onChange(val) {
+                updateColorSettings();
+            }
+        });
+        settingButtonDefault = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Trix Loader node color .ButtonDefault",
+            name: "🎨 Customization Node Colors: Default Buttons (Hex)",
+            defaultValue: "#33789a",
+            type: "text",
+            onChange(val) {
+                updateColorSettings();
+            }
+        });
+        settingButtonActive = app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Trix Loader node color .ButtonActive",
+            name: "🎨 Customization Node Colors: Enabled Settings (Hex)",
+            defaultValue: "#dd7055",
+            type: "text",
+            onChange(val) {
+                updateColorSettings();
+            }
+        });
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Trix Loader node color .TextColor",
+            name: "🎨 Customization Node Colors: Text Color (Hex)",
+            defaultValue: "#e7e7ea",
+            type: "text",
+            onChange(val) {
+                updateColorSettings();
+            }
+        });
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Trix Loader node color .IconColor",
+            name: "🎨 Customization Node Colors: Icon Color (Hex)",
+            defaultValue: "#cccccc",
+            type: "text",
+            onChange(val) {
+                updateColorSettings();
+            }
+        });
+
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Trix Loader node color .MaskToolbarIconBg",
+            name: "🎨 Customization Node Colors: Mask Toolbar Button Background (Hex)",
+            defaultValue: "#2e333d",
+            type: "text",
+            onChange(val) {
+                updateColorSettings();
+            }
+        });
+        app.ui.settings.addSetting({
+            id: "Trix AIO Tools.Trix Loader node color .NodeBorderWidth",
+            name: "🎨 Customization Node Colors: Node Border Width (px)",
+            defaultValue: 1,
+            type: "number",
+            onChange(val) {
+                updateColorSettings();
+            }
+        });
+
+        // Initialize colors immediately
+        updateColorSettings();
+
+        const wrapAll = () => {
+            if (window.LiteGraph) {
+                if (LiteGraph.LGraphNode) {
+                    wrapNodeGetExtraMenuOptions(LiteGraph.LGraphNode);
+                }
+                const regTypes = LiteGraph.registered_node_types;
+                if (regTypes) {
+                    for (const name in regTypes) {
+                        const registryInfo = regTypes[name];
+                        if (registryInfo) {
+                            if (registryInfo.class) {
+                                wrapNodeGetExtraMenuOptions(registryInfo.class);
+                            } else {
+                                wrapNodeGetExtraMenuOptions(registryInfo);
+                            }
+                        }
+                    }
+                }
+                const lgNodes = LiteGraph.Nodes;
+                if (lgNodes) {
+                    for (const name in lgNodes) {
+                        const nodeClass = lgNodes[name];
+                        if (nodeClass) {
+                            wrapNodeGetExtraMenuOptions(nodeClass);
+                        }
+                    }
+                }
+            }
+        };
+        wrapAll();
+        setTimeout(wrapAll, 1000);
+        setTimeout(wrapAll, 3000);
+
+        // Enhance Color Settings UI with a Palette Picker and Reset Button
+        const TRIX_COLOR_DEFAULTS = {
+            "Trix AIO Tools.Trix Loader node color .NodeBg": "#303540",
+            "Trix AIO Tools.Trix Loader node color .NodeBorder": "#35343c",
+            "Trix AIO Tools.Trix Loader node color .ButtonDefault": "#33789a",
+            "Trix AIO Tools.Trix Loader node color .ButtonActive": "#dd7055",
+            "Trix AIO Tools.Trix Loader node color .TextColor": "#e7e7ea",
+            "Trix AIO Tools.Trix Loader node color .IconColor": "#cccccc",
+            "Trix AIO Tools.Trix Loader node color .MaskToolbarIconBg": "#2e333d",
+            "Trix AIO Tools.Trix Loader node color .NodeBorderWidth": 1
+        };
+
+        const findSettingRowContainer = (el) => {
+            let parent = el.parentElement;
+            while (parent && parent !== document.body) {
+                if (parent.tagName === "TR") return parent;
+                if (parent.classList.contains("comfy-setting-row") || 
+                    parent.classList.contains("comfy-settings-row") ||
+                    parent.classList.contains("setting-row")) {
+                    return parent;
+                }
+                const input = parent.querySelector("input[type='text'], input[type='number'], input, select");
+                if (input && parent.tagName !== "TABLE" && parent.tagName !== "TBODY" && parent.tagName !== "FORM" && 
+                    !parent.classList.contains("comfy-settings-table") && !parent.classList.contains("comfy-table")) {
+                    return parent;
+                }
+                parent = parent.parentElement;
+            }
+            return el.closest("tr") || el.parentElement;
+        };
+
+        const enhanceColorSettingsUI = () => {
+            const settingIds = Object.keys(TRIX_COLOR_DEFAULTS);
+            const rows = [];
+            let firstRow = null;
+
+            const settingNames = {
+                "Trix AIO Tools.Trix Loader node color .NodeBg": "🎨 Customization Node Colors: Node Background (Hex)",
+                "Trix AIO Tools.Trix Loader node color .NodeBorder": "🎨 Customization Node Colors: Node Border (Hex)",
+                "Trix AIO Tools.Trix Loader node color .ButtonDefault": "🎨 Customization Node Colors: Default Buttons (Hex)",
+                "Trix AIO Tools.Trix Loader node color .ButtonActive": "🎨 Customization Node Colors: Enabled Settings (Hex)",
+                "Trix AIO Tools.Trix Loader node color .TextColor": "🎨 Customization Node Colors: Text Color (Hex)",
+                "Trix AIO Tools.Trix Loader node color .IconColor": "🎨 Customization Node Colors: Icon Color (Hex)",
+                "Trix AIO Tools.Trix Loader node color .MaskToolbarIconBg": "🎨 Customization Node Colors: Mask Toolbar Button Background (Hex)",
+                "Trix AIO Tools.Trix Loader node color .NodeBorderWidth": "🎨 Customization Node Colors: Node Border Width (px)"
+            };
+
+            const cleanText = (txt) => txt ? txt.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+
+            settingIds.forEach(id => {
+                const displayName = settingNames[id];
+                let inputEl = null;
+                let rowEl = null;
+
+                // 1. Search by exact display name label matching
+                if (displayName) {
+                    const targetClean = cleanText(displayName);
+                    const labels = document.querySelectorAll("label, td, span, th, div.comfy-setting-name");
+                    for (let el of labels) {
+                        if (el.textContent && cleanText(el.textContent) === targetClean) {
+                            const container = findSettingRowContainer(el);
+                            if (container) {
+                                const input = container.querySelector("input[type='text'], input[type='number'], input, select");
+                                if (input) {
+                                    inputEl = input;
+                                    rowEl = container;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Fallback to direct ID/name matching
+                if (!inputEl) {
+                    inputEl = document.getElementById(id);
+                    if (!inputEl) {
+                        const inputs = document.getElementsByTagName("input");
+                        for (let input of inputs) {
+                            if (input.name === id || input.id === id || input.id.endsWith(id)) {
+                                inputEl = input;
+                                break;
+                            }
+                        }
+                    }
+                    if (inputEl) {
+                        rowEl = findSettingRowContainer(inputEl);
+                    }
+                }
+
+                if (inputEl && rowEl) {
+                    rows.push({ id, rowEl, inputEl });
+                    if (!firstRow) firstRow = rowEl;
+
+                    if (!inputEl.dataset.trixEnhanced) {
+                        inputEl.dataset.trixEnhanced = "true";
+                        
+                        const defColor = TRIX_COLOR_DEFAULTS[id];
+                        const parent = inputEl.parentElement;
+                        const container = document.createElement("div");
+                        container.className = "trix-setting-color-container";
+                        container.style.cssText = "display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;";
+                        
+                        parent.insertBefore(container, inputEl);
+                        container.appendChild(inputEl);
+                        
+                        inputEl.style.flex = "1";
+                        inputEl.style.minWidth = "60px";
+
+                        const colorPicker = document.createElement("input");
+                        colorPicker.type = "color";
+                        colorPicker.value = /^#[0-9A-Fa-f]{6}$/.test(inputEl.value) ? inputEl.value : (defColor && typeof defColor === 'string' && defColor.startsWith('#') ? defColor : "#ffffff");
+                        colorPicker.style.cssText = "width: 28px; height: 24px; padding: 0; border: 1px solid #444; border-radius: 4px; background: transparent; cursor: pointer; box-sizing: border-box; flex-shrink: 0;";
+                        
+                        const resetBtn = document.createElement("button");
+                        resetBtn.type = "button";
+                        resetBtn.innerHTML = "↺";
+                        resetBtn.title = `Reset to default (${defColor})`;
+                        resetBtn.style.cssText = "width: 24px; height: 24px; padding: 0; border: 1px solid #444; border-radius: 4px; background: #2a2a2f; color: #ccc; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; line-height: 1; transition: 0.15s; box-sizing: border-box; flex-shrink: 0;";
+                        
+                        resetBtn.onmouseenter = () => { resetBtn.style.background = "#3a3a3f"; resetBtn.style.color = "#fff"; };
+                        resetBtn.onmouseleave = () => { resetBtn.style.background = "#2a2a2f"; resetBtn.style.color = "#ccc"; };
+
+                        const syncInputToPicker = () => {
+                            let val = inputEl.value;
+                            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                                colorPicker.value = val;
+                            }
+                        };
+                        inputEl.addEventListener("input", syncInputToPicker);
+                        inputEl.addEventListener("change", syncInputToPicker);
+
+                        const syncPickerToInput = (e) => {
+                            inputEl.value = e.target.value;
+                            inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+                            inputEl.dispatchEvent(new Event("change", { bubbles: true }));
+                        };
+                        colorPicker.addEventListener("input", syncPickerToInput);
+                        colorPicker.addEventListener("change", syncPickerToInput);
+
+                        resetBtn.onclick = (e) => {
+                            e.preventDefault();
+                            inputEl.value = defColor;
+                            if (colorPicker.type === "color") {
+                                colorPicker.value = defColor;
+                            }
+                            inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+                            inputEl.dispatchEvent(new Event("change", { bubbles: true }));
+                        };
+
+                        if (inputEl.type !== "number") {
+                            container.appendChild(colorPicker);
+                        }
+                        container.appendChild(resetBtn);
+                    }
+                }
             });
-            Object.defineProperty(nodeType.prototype, "bgcolor", {
-                get: function() { return TRIX_BG; },
-                set: function(v) {},
-                configurable: true,
-                enumerable: true
+
+            if (rows.length > 0 && firstRow && firstRow.parentElement) {
+                const parentTable = firstRow.parentElement;
+                
+                // Hide all original rows completely (both labels and inputs)
+                rows.forEach(r => {
+                    r.rowEl.style.setProperty("display", "none", "important");
+                });
+
+                let previewRow = parentTable.querySelector(".trix-node-color-preview-row");
+                if (previewRow) {
+                    if (typeof syncPreviewColors === "function") {
+                        syncPreviewColors();
+                    }
+                    return;
+                }
+
+                if (!document.getElementById("trix-color-preview-styles")) {
+                    const style = document.createElement("style");
+                    style.id = "trix-color-preview-styles";
+                    style.innerHTML = `
+                        .trix-prev-item {
+                            transition: all 0.15s ease-in-out !important;
+                        }
+                        .trix-prev-item:hover {
+                            outline: 1.5px solid rgba(255, 255, 255, 0.35) !important;
+                            outline-offset: 1px !important;
+                            filter: brightness(1.15) !important;
+                        }
+                        .trix-interactive-preview-card:hover {
+                            box-shadow: 0 6px 20px rgba(0,0,0,0.6) !important;
+                            outline: 1.5px solid rgba(255, 255, 255, 0.35) !important;
+                            outline-offset: 1px !important;
+                        }
+                        .trix-color-control-row:hover {
+                            background: rgba(255,255,255,0.08) !important;
+                            border-color: rgba(255,255,255,0.15) !important;
+                        }
+                        .trix-theme-editor * {
+                            box-sizing: border-box;
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+
+                previewRow = document.createElement("tr");
+                previewRow.className = "trix-node-color-preview-row";
+                
+                const td = document.createElement("td");
+                td.colSpan = 2;
+                td.style.cssText = "padding: 15px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); text-align: center;";
+                
+                const themeEditor = document.createElement("div");
+                themeEditor.className = "trix-theme-editor";
+                themeEditor.style.cssText = `display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; align-items: center; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 15px; width: 100%; max-width: 550px; margin: 0 auto; box-sizing: border-box;`;
+
+                const previewCard = document.createElement("div");
+                previewCard.className = "trix-interactive-preview-card";
+                previewCard.style.cssText = `
+                    width: 180px; padding: 8px; border-radius: 8px; background: var(--trix-bg);
+                    border: var(--trix-border-width, 1px) solid var(--trix-border);
+                    font-family: sans-serif; color: var(--trix-text); box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+                    position: relative; user-select: none; text-align: left; flex-shrink: 0; cursor: pointer;
+                    transition: border-color 0.15s ease, background-color 0.15s ease, border-width 0.1s ease;
+                `;
+                
+                const triggerPicker = (id) => {
+                    const rowInfo = rows.find(r => r.id === id);
+                    if (rowInfo && rowInfo.rowEl) {
+                        const picker = rowInfo.rowEl.querySelector("input[type='color']") || rowInfo.rowEl.querySelector("input[type='number']");
+                        if (picker) picker.click();
+                    }
+                };
+
+                previewCard.innerHTML = `
+                    <div class="trix-prev-item" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <div style="font-size: 9px; font-weight: bold; display: flex; align-items: center; gap: 3px; color: var(--trix-text);">
+                            <span style="display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--trix-icon);"></span>
+                            <span>Load Image AIO</span>
+                        </div>
+                    </div>
+                    <div class="trix-prev-item trix-prev-imagebox" style="height: 70px; background: rgba(0,0,0,0.2); border: 1px dashed var(--trix-border); border-radius: 4px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; color: var(--trix-icon); font-size: 8px;">
+                        <span>Image Area</span>
+                    </div>
+                    <div class="trix-prev-item trix-prev-upload" style="height: 16px; background: var(--trix-accent); color: var(--trix-text); border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: bold; margin-bottom: 6px;">Upload Image</div>
+                    <div style="display: flex; gap: 3px; margin-bottom: 6px;">
+                        <div class="trix-prev-item trix-prev-tab-active" style="flex: 1; height: 14px; background: var(--trix-active); color: var(--trix-text); border-radius: 2px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: bold;">MASK</div>
+                        <div class="trix-prev-item trix-prev-tab-default" style="flex: 1; height: 14px; background: var(--trix-accent); color: var(--trix-text); border-radius: 2px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: bold;">FILTER</div>
+                    </div>
+                    <div class="trix-prev-toolbar" style="height: 22px; background: var(--trix-bg); border: 1px solid var(--trix-border); border-radius: 4px; display: flex; align-items: center; padding: 0 4px; gap: 3px;">
+                        <div style="flex: 1; height: 3px; background: rgba(255,255,255,0.2); border-radius: 1px; position: relative; margin: 0 4px;">
+                            <div style="position: absolute; left: 30%; top: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--trix-accent);"></div>
+                        </div>
+                        <div class="trix-prev-item trix-prev-icon-bg" style="width: 14px; height: 14px; background: var(--trix-mask-toolbar-icon-bg); border: 1px solid var(--trix-border); border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 8px; color: var(--trix-icon); transition: background-color 0.15s ease;">👁</div>
+                        <div class="trix-prev-item trix-prev-icon-bg" style="width: 14px; height: 14px; background: var(--trix-mask-toolbar-icon-bg); border: 1px solid var(--trix-border); border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 8px; color: var(--trix-icon); transition: background-color 0.15s ease;">⎌</div>
+                    </div>
+                `;
+
+                previewCard.addEventListener("click", (e) => {
+                    const target = e.target;
+                    if (target.closest(".trix-prev-icon-bg")) {
+                        triggerPicker("Trix AIO Tools.Trix Loader node color .MaskToolbarIconBg");
+                        e.stopPropagation();
+                        return;
+                    }
+                    if (target.closest(".trix-prev-imagebox")) {
+                        triggerPicker("Trix AIO Tools.Trix Loader node color .NodeBg");
+                        e.stopPropagation();
+                        return;
+                    }
+                    if (target.closest(".trix-prev-upload") || target.closest(".trix-prev-tab-default")) {
+                        triggerPicker("Trix AIO Tools.Trix Loader node color .ButtonDefault");
+                        e.stopPropagation();
+                        return;
+                    }
+                    if (target.closest(".trix-prev-tab-active")) {
+                        triggerPicker("Trix AIO Tools.Trix Loader node color .ButtonActive");
+                        e.stopPropagation();
+                        return;
+                    }
+                    if (target.closest(".trix-prev-header")) {
+                        triggerPicker("Trix AIO Tools.Trix Loader node color .TextColor");
+                        e.stopPropagation();
+                        return;
+                    }
+                    
+                    const rect = previewCard.getBoundingClientRect();
+                    const pad = Math.max(10, TRIX_NODE_BORDER_WIDTH + 4);
+                    if (e.clientX - rect.left < pad || rect.right - e.clientX < pad || e.clientY - rect.top < pad || rect.bottom - e.clientY < pad) {
+                        triggerPicker("Trix AIO Tools.Trix Loader node color .NodeBorder");
+                    } else {
+                        triggerPicker("Trix AIO Tools.Trix Loader node color .NodeBg");
+                    }
+                    e.stopPropagation();
+                });
+
+                const controlsList = document.createElement("div");
+                controlsList.className = "trix-color-controls-list";
+                controlsList.style.cssText = "display: flex; flex-direction: column; gap: 6px; min-width: 240px; flex: 1; text-align: left;";
+
+                const displayNames = {
+                    "Trix AIO Tools.Trix Loader node color .NodeBg": "Node Background",
+                    "Trix AIO Tools.Trix Loader node color .NodeBorder": "Node Border",
+                    "Trix AIO Tools.Trix Loader node color .ButtonDefault": "Default Buttons",
+                    "Trix AIO Tools.Trix Loader node color .ButtonActive": "Active Setting Tab",
+                    "Trix AIO Tools.Trix Loader node color .TextColor": "Text Color",
+                    "Trix AIO Tools.Trix Loader node color .IconColor": "Icon Color",
+                    "Trix AIO Tools.Trix Loader node color .MaskToolbarIconBg": "Toolbar Button Background"
+                };
+
+                settingIds.forEach(id => {
+                    if (id === "Trix AIO Tools.Trix Loader node color .NodeBorderWidth") return;
+                    const labelName = displayNames[id];
+                    if (!labelName) return; // Ignore deleted settings
+                    
+                    const currentVal = app.ui.settings.getSettingValue(id, TRIX_COLOR_DEFAULTS[id]) || TRIX_COLOR_DEFAULTS[id];
+                    
+                    const row = document.createElement("div");
+                    row.className = "trix-color-control-row";
+                    row.dataset.settingId = id;
+                    row.style.cssText = "display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 4px; padding: 4px 8px; cursor: pointer;";
+                    row.innerHTML = `<div style="display: flex; align-items: center; gap: 6px; pointer-events: none;"><span class="trix-color-indicator" style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${currentVal};"></span><span style="color: #eee; font-weight: bold; font-size: 11px;">${labelName}</span></div><span class="trix-color-code-badge" style="font-family: monospace; font-size: 10px; background: #111; border: 1px solid #444; border-radius: 3px; padding: 1px 4px; color: #ccc;">${currentVal.toUpperCase()}</span>`;
+                    row.addEventListener("click", () => triggerPicker(id));
+                    controlsList.appendChild(row);
+                });
+
+                const borderSliderContainer = document.createElement("div");
+                borderSliderContainer.style.cssText = "display: flex; flex-direction: column; gap: 4px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 4px; padding: 6px 8px; margin-top: 4px;";
+                const initialWidth = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .NodeBorderWidth", 1);
+                borderSliderContainer.innerHTML = `<div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #eee; font-weight: bold;"><span>Node Border Width</span><span class="trix-border-width-val" style="font-family: monospace; font-size: 10px; background: #111; border: 1px solid #444; border-radius: 3px; padding: 1px 4px; color: #ccc;">${initialWidth}</span></div><input type="range" min="0" max="5" value="${initialWidth}" style="width: 100%; cursor: pointer;">`;
+                const rangeInput = borderSliderContainer.querySelector("input");
+                rangeInput.addEventListener("input", (e) => {
+                    const val = Number(e.target.value);
+                    borderSliderContainer.querySelector(".trix-border-width-val").innerText = String(val);
+                    app.ui.settings.setSettingValue("Trix AIO Tools.Trix Loader node color .NodeBorderWidth", val);
+                    const rowInfo = rows.find(r => r.id === "Trix AIO Tools.Trix Loader node color .NodeBorderWidth");
+                    if (rowInfo && rowInfo.inputEl) {
+                        rowInfo.inputEl.value = val;
+                    }
+                });
+                controlsList.appendChild(borderSliderContainer);
+
+                const resetAllBtn = document.createElement("button");
+                resetAllBtn.innerText = "↺ Reset All Colors";
+                resetAllBtn.style.cssText = "margin-top: 8px; padding: 4px 10px; border: 1px solid #444; border-radius: 4px; background: #2a2a2f; color: #ccc; font-size: 10.5px; font-weight: bold; cursor: pointer;";
+                resetAllBtn.onclick = () => {
+                    rows.forEach(r => {
+                        const rowEl = r.rowEl;
+                        const reset = rowEl.querySelector("button");
+                        if (reset) reset.click();
+                    });
+                };
+                controlsList.appendChild(resetAllBtn);
+
+                themeEditor.appendChild(previewCard);
+                themeEditor.appendChild(controlsList);
+                td.appendChild(themeEditor);
+                previewRow.appendChild(td);
+                parentTable.insertBefore(previewRow, firstRow);
+
+                syncPreviewColors = () => {
+                    rows.forEach(r => {
+                        if (r.id === "Trix AIO Tools.Trix Loader node color .NodeBorderWidth") {
+                            rangeInput.value = r.inputEl.value;
+                            borderSliderContainer.querySelector(".trix-border-width-val").innerText = String(r.inputEl.value);
+                            return;
+                        }
+                        const val = r.inputEl.value;
+                        const row = controlsList.querySelector(`[data-setting-id="${r.id}"]`);
+                        if (row) {
+                            row.querySelector(".trix-color-indicator").style.backgroundColor = val;
+                            row.querySelector(".trix-color-code-badge").innerText = val.toUpperCase();
+                        }
+                    });
+                };
+                rows.forEach(r => r.rowEl.style.setProperty("display", "none", "important"));
+            }
+        };
+
+        let enhanceTimeout = null;
+        const observer = new MutationObserver((mutations) => {
+            if (mutations.some(m => m.addedNodes.length)) {
+                if (enhanceTimeout) clearTimeout(enhanceTimeout);
+                enhanceTimeout = setTimeout(enhanceColorSettingsUI, 50);
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    },
+    async beforeRegisterNodeDef(nodeType, nodeData) {
+        wrapNodeGetExtraMenuOptions(nodeType);
+        if (nodeData.name === "TrixLoadImageAIO") {
+            Object.defineProperty(nodeType.prototype, "imgs", {
+                get() { return null; },
+                set(val) { /* do nothing */ },
+                configurable: true
+            });
+            Object.defineProperty(nodeType.prototype, "image", {
+                get() { return null; },
+                set(val) { /* do nothing */ },
+                configurable: true
             });
 
             nodeType.prototype.getTooltip = function() {
-                return `Professional loader/masking/resizing/cropping/outpainting image tool`;
+                return `🪬 TrixLoader — All-in-one loader, mask editor, and RAW color corrector.
+
+Inputs & Outputs:
+• IMAGE — Processed image with color corrections and cropping applied.
+• MASK — Hand-drawn or AI-generated mask.
+• original_input — Untouched original input image (useful for comparison).
+
+Control Tabs on the Node:
+1. ❂ COLOR GRADING [Filter] — Toggle RAW filters, adjust exposure, saturation, curves, and effects. Double-click the tab or click "Live Camera Raw" to open the fullscreen editor.
+2. ✎ MASKING [Mask] — Settings for drawing masks directly on the node (brush size, hardness). Double-click the tab to open the fullscreen Trix Mask Editor.
+3. 回 RESIZING & CROPPING [Resize] — Control resolution, proportions (stretch, resize, crop, pad) and outpaint feathering. Double-click the tab to open the fullscreen Crop Editor.
+
+💡 Tips:
+• File Drag & Drop: Drag an image directly onto the node canvas or click "Choose file to upload".
+• Node Context Menu: Right-click the node to Copy/Paste Images and Masks directly.
+• Auto-Saving: All configurations are stored inside your ComfyUI workflow JSON file.`;
             };
 
             const onConfigureOriginal = nodeType.prototype.onConfigure;
             nodeType.prototype.onConfigure = function(info) {
                 this._isConfiguring = true; 
                 this._isFirstLoad = false; 
+                this._lastImageName = null;
+                this._currentLiveUrl = null;
+                if (this.imgTagRef) {
+                    this.imgTagRef.src = "";
+                }
                 if (onConfigureOriginal) onConfigureOriginal.apply(this, arguments);
                 applyTrixNodeChrome(this);
                 refreshTrixOutputs(this);
@@ -198,8 +1641,28 @@ app.registerExtension({
                     this._loadedSize = [...info.size];
                 }
                 
+                const uWgt = this.widgets ? this.widgets.find(w => w.name === "trix_uuid") : null;
+                if (uWgt) {
+                    if (!uWgt.value || isUUIDInUse(uWgt.value, this)) {
+                        uWgt.value = generateTrixUUID();
+                    }
+                }
+
                 if (this.syncHTMLRef) this.syncHTMLRef();
                 if (this.updateUIRef) this.updateUIRef(true);
+
+                const inImageInput = this.inputs ? this.inputs.find(slot => slot && slot.name === "in_image") : null;
+                const willBeWired = inImageInput && inImageInput.link !== null && inImageInput.link !== undefined;
+                if (willBeWired) {
+                    const delayPull = () => {
+                        if (this.pullLivePreviewRef) this.pullLivePreviewRef();
+                    };
+                    setTimeout(delayPull, 100);
+                    setTimeout(delayPull, 300);
+                    setTimeout(delayPull, 600);
+                    setTimeout(delayPull, 1000);
+                    setTimeout(delayPull, 2000);
+                }
 
                 setTimeout(() => {
                     this._isConfiguring = false;
@@ -211,6 +1674,10 @@ app.registerExtension({
                 const cloned = onCloneOriginal ? onCloneOriginal.apply(this, arguments) : LiteGraph.LGraphNode.prototype.clone.call(this);
                 cloned._loadedSize = [...this.size];
                 cloned._isFirstLoad = false; 
+                const uWgt = cloned.widgets ? cloned.widgets.find(w => w.name === "trix_uuid") : null;
+                if (uWgt) {
+                    uWgt.value = generateTrixUUID();
+                }
                 return cloned;
             };
 
@@ -232,7 +1699,7 @@ app.registerExtension({
                         }
                         return w;
                     }
-                    const hideNames = ["mask_data", "crop_data", "cr_enable", "hsl_active", "hsl_data", "curve_active", "curve_data", "width", "height", "pad_left", "pad_top", "pad_right", "pad_bottom", "upscale_method", "keep_proportion", "scale_by", "condition", "feathering", "divisible_by", "enable_resize", "crop_position", "pad_color", "fill_color"];
+                    const hideNames = ["trix_uuid", "mask_data", "crop_data", "cr_enable", "hsl_active", "hsl_data", "curve_active", "curve_data", "width", "height", "pad_left", "pad_top", "pad_right", "pad_bottom", "upscale_method", "keep_proportion", "scale_by", "condition", "feathering", "divisible_by", "enable_resize", "crop_position", "pad_color", "fill_color"];
                     if (hideNames.includes(name) || name.startsWith("cr_") || name.startsWith("hsl_") || name.startsWith("curve_")) {
                         hideWidget(w);
                     }
@@ -246,105 +1713,157 @@ app.registerExtension({
                     origGetExtraMenuOptions.apply(this, arguments);
                 }
                 
-                options.push(null); 
-                
-                if (this.imgTagRef && this.imgTagRef.complete && this.imgTagRef.naturalWidth > 0) {
-                    options.push({
-                        content: `${svgCopy} Copy Image`,
-                        callback: () => {
-                            try {
-                                const tCanvas = document.createElement("canvas");
-                                tCanvas.width = this.imgTagRef.naturalWidth;
-                                tCanvas.height = this.imgTagRef.naturalHeight;
-                                const tCtx = tCanvas.getContext("2d");
-                                tCtx.drawImage(this.imgTagRef, 0, 0);
-                                tCanvas.toBlob(async (blob) => {
-                                    if (blob) {
-                                        await navigator.clipboard.write([
-                                            new ClipboardItem({ "image/png": blob })
-                                        ]);
-                                    }
-                                }, "image/png");
-                            } catch (err) {
-                                console.error("TrixLoader Copy Image Error:", err);
-                                alert("Не удалось скопировать изображение.");
+                const showCopyImage = settingCopyImage.value;
+                const showPasteImage = settingPasteImage.value;
+                const showCopyMask = settingCopyMask.value;
+                const showPasteMask = settingPasteMask.value;
+
+                if (showCopyImage || showPasteImage) {
+                    options.push(null);
+                    if (showCopyImage && this.imgTagRef && this.imgTagRef.complete && this.imgTagRef.naturalWidth > 0) {
+                        options.push({
+                            content: `${svgCopy} Copy Image`,
+                            callback: () => {
+                                try {
+                                    const tCanvas = document.createElement("canvas");
+                                    tCanvas.width = this.imgTagRef.naturalWidth;
+                                    tCanvas.height = this.imgTagRef.naturalHeight;
+                                    const tCtx = tCanvas.getContext("2d");
+                                    tCtx.drawImage(this.imgTagRef, 0, 0);
+                                    tCanvas.toBlob(async (blob) => {
+                                        if (blob) {
+                                            await navigator.clipboard.write([
+                                                new ClipboardItem({ "image/png": blob })
+                                            ]);
+                                        }
+                                    }, "image/png");
+                                } catch (err) {
+                                    console.error("TrixLoader Copy Image Error:", err);
+                                    alert("Failed to copy image.");
+                                }
                             }
-                        }
-                    });
+                        });
+                    }
+                    if (showPasteImage) {
+                        options.push({
+                            content: `${svgPaste} Paste Image`,
+                            callback: async () => {
+                                try {
+                                    const items = await navigator.clipboard.read();
+                                    for (let item of items) {
+                                        if (item.types.some(t => t.startsWith('image/'))) {
+                                            const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
+                                            const localUuid = this.widgets ? this.widgets.find(w => w.name === "trix_uuid")?.value : null;
+                                            const filename = trixAioFilename("paste", localUuid || this.id, "", blob.type);
+                                            const newFile = new File([blob], filename, { type: blob.type || "image/png" }); 
+                                            const body = new FormData(); body.append("image", newFile, filename); trixAppendAioUploadFields(body, filename);
+                                            const resp = await fetch("/upload/image", { method: "POST", body: body }); 
+                                            if (resp.status === 200) { 
+                                                const data = await resp.json(); 
+                                                const finalName = trixAioFullPath(data);
+                                                const imgWidget = this.widgets.find(w => w.name === "image");
+                                                if (imgWidget) { imgWidget.value = finalName; if (imgWidget.callback) imgWidget.callback(finalName); } 
+                                            }
+                                            break;
+                                        }
+                                    }
+                                } catch (err) {
+                                    alert("Failed to paste image: " + err);
+                                }
+                            }
+                        });
+                    }
                 }
 
-                options.push({
-                    content: `${svgPaste} Paste Image`,
-                    callback: async () => {
-                        try {
-                            const items = await navigator.clipboard.read();
-                            for (let item of items) {
-                                if (item.types.some(t => t.startsWith('image/'))) {
-                                    const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
-                                    const filename = trixAioFilename("paste", this.id, "", blob.type);
-                                    const newFile = new File([blob], filename, { type: blob.type || "image/png" }); 
-                                    const body = new FormData(); body.append("image", newFile, filename); trixAppendAioUploadFields(body);
-                                    const resp = await fetch("/upload/image", { method: "POST", body: body }); 
-                                    if (resp.status === 200) { 
-                                        const data = await resp.json(); 
-                                        const finalName = trixAioFullPath(data);
-                                        const imgWidget = this.widgets.find(w => w.name === "image");
-                                        if (imgWidget) { imgWidget.value = finalName; if (imgWidget.callback) imgWidget.callback(finalName); } 
+                if (showCopyMask || showPasteMask) {
+                    options.push(null);
+                    if (showCopyMask) {
+                        options.push({
+                            content: `${svgCopy} Copy Mask`,
+                            callback: () => {
+                                if (!this.maskCanvasRef) return;
+                                try {
+                                    this.maskCanvasRef.toBlob(async (blob) => {
+                                        if (blob) {
+                                            await navigator.clipboard.write([
+                                                new ClipboardItem({ "image/png": blob })
+                                            ]);
+                                        }
+                                    }, "image/png");
+                                } catch (err) {
+                                    console.error("TrixLoader Copy Mask Error:", err);
+                                }
+                            }
+                        });
+                    }
+                    if (showPasteMask) {
+                        options.push({
+                            content: `${svgPaste} Paste Mask`,
+                            callback: async () => {
+                                if (!this.maskCanvasRef) return;
+                                try {
+                                    const items = await navigator.clipboard.read();
+                                    for (let item of items) {
+                                        if (item.types.some(t => t.startsWith('image/'))) {
+                                            const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
+                                            const img = new Image();
+                                            img.onload = () => {
+                                                const tempCanvas = document.createElement("canvas");
+                                                tempCanvas.width = this.maskCanvasRef.width;
+                                                tempCanvas.height = this.maskCanvasRef.height;
+                                                const tempCtx = tempCanvas.getContext("2d");
+                                                tempCtx.drawImage(img, 0, 0, tempCanvas.width, tempCanvas.height);
+                                                
+                                                const imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+                                                const data = imgData.data;
+                                                
+                                                let hasAlpha = false;
+                                                for (let i = 0; i < data.length; i += 4) {
+                                                    if (data[i + 3] < 255) {
+                                                        hasAlpha = true;
+                                                        break;
+                                                    }
+                                                }
+                                                
+                                                for (let i = 0; i < data.length; i += 4) {
+                                                    const r = data[i];
+                                                    const g = data[i + 1];
+                                                    const b = data[i + 2];
+                                                    const a = data[i + 3];
+                                                    
+                                                    let maskVal = 0;
+                                                    if (hasAlpha) {
+                                                        maskVal = a;
+                                                    } else {
+                                                        maskVal = Math.max(r, g, b);
+                                                    }
+                                                    
+                                                    data[i] = 255;
+                                                    data[i + 1] = 0;
+                                                    data[i + 2] = 0;
+                                                    data[i + 3] = maskVal;
+                                                }
+                                                
+                                                const mctx = this.maskCanvasRef.getContext("2d");
+                                                mctx.clearRect(0, 0, this.maskCanvasRef.width, this.maskCanvasRef.height);
+                                                const newImgData = mctx.createImageData(tempCanvas.width, tempCanvas.height);
+                                                newImgData.data.set(data);
+                                                mctx.putImageData(newImgData, 0, 0);
+                                                
+                                                if (this.saveHistoryRef) this.saveHistoryRef();
+                                                if (app.graph) app.graph.setDirtyCanvas(true, true);
+                                            };
+                                            img.src = URL.createObjectURL(blob);
+                                            break;
+                                        }
                                     }
-                                    break;
+                                } catch (err) {
+                                    alert("Failed to paste mask: " + err);
                                 }
                             }
-                        } catch (err) {
-                            alert("Failed to paste image: " + err);
-                        }
+                        });
                     }
-                });
-
-                options.push(null);
-                options.push({
-                    content: `${svgCopy} Copy Mask`,
-                    callback: () => {
-                        if (!this.maskCanvasRef) return;
-                        try {
-                            this.maskCanvasRef.toBlob(async (blob) => {
-                                if (blob) {
-                                    await navigator.clipboard.write([
-                                        new ClipboardItem({ "image/png": blob })
-                                    ]);
-                                }
-                            }, "image/png");
-                        } catch (err) {
-                            console.error("TrixLoader Copy Mask Error:", err);
-                        }
-                    }
-                });
-
-                options.push({
-                    content: `${svgPaste} Paste Mask`,
-                    callback: async () => {
-                        if (!this.maskCanvasRef) return;
-                        try {
-                            const items = await navigator.clipboard.read();
-                            for (let item of items) {
-                                if (item.types.some(t => t.startsWith('image/'))) {
-                                    const blob = await item.getType(item.types.find(t => t.startsWith('image/')));
-                                    const img = new Image();
-                                    img.onload = () => {
-                                        const mctx = this.maskCanvasRef.getContext("2d");
-                                        mctx.globalCompositeOperation = "source-over";
-                                        mctx.drawImage(img, 0, 0, this.maskCanvasRef.width, this.maskCanvasRef.height);
-                                        if (this.saveHistoryRef) this.saveHistoryRef();
-                                        if (app.graph) app.graph.setDirtyCanvas(true, true);
-                                    };
-                                    img.src = URL.createObjectURL(blob);
-                                    break;
-                                }
-                            }
-                        } catch (err) {
-                            alert("Failed to paste mask: " + err);
-                        }
-                    }
-                });
+                }
             };
 
             const doFloodFillWorker = (mctx, startX, startY, fillR, fillG, fillB, fillA, tolerance) => {
@@ -498,9 +2017,9 @@ app.registerExtension({
 
             nodeType.prototype.drawTrixPreview = function(ctx, coverNodeBody = false) {
                 const modeWidget = this.widgets ? this.widgets.find(w => w && w.name === "mode") : null;
-                const mode = modeWidget ? modeWidget.value : "Base";
+                const mode = modeWidget ? modeWidget.value : "Preview";
                 if (mode === "Resize" && !this.isFullscreen) return;
-                if (mode === "Base" && this._showCameraRawMenu) return; 
+                if (mode === "Filter") return; 
 
                 if (this.imgTagRef && this.imgTagRef.naturalWidth > 0 && !this.isPreviewHidden && !this.isFullscreen) {
                     const rect = this.getImageRect();
@@ -540,24 +2059,8 @@ app.registerExtension({
             };
 
             nodeType.prototype.onDrawBackground = function(ctx) {
+                this.boxcolor = "rgba(0,0,0,0)";
                 if (this.flags.collapsed) return;
-                if (!Object.getOwnPropertyDescriptor(this, "color") || Object.getOwnPropertyDescriptor(this, "color").get === undefined) {
-                    Object.defineProperty(this, "color", {
-                        get: function() { return TRIX_NODE_OUTLINE; },
-                        set: function(v) {},
-                        configurable: true,
-                        enumerable: true
-                    });
-                }
-                if (!Object.getOwnPropertyDescriptor(this, "bgcolor") || Object.getOwnPropertyDescriptor(this, "bgcolor").get === undefined) {
-                    Object.defineProperty(this, "bgcolor", {
-                        get: function() { return TRIX_BG; },
-                        set: function(v) {},
-                        configurable: true,
-                        enumerable: true
-                    });
-                }
-                
                 // Draw the body background starting at y = 0 to cover the header color in the slot area
                 const nodeRadius = (typeof LiteGraph !== "undefined" && Number.isFinite(LiteGraph.ROUND_RADIUS)) ? LiteGraph.ROUND_RADIUS : TRIX_NODE_RADIUS;
                 ctx.save();
@@ -578,7 +2081,22 @@ app.registerExtension({
 
             nodeType.prototype.onNodeCreated = function() {
                 const node = this;
+                if (typeof allTrixNodes !== "undefined") {
+                    allTrixNodes.push(node);
+                }
                 node.properties = node.properties || {};
+                
+                const initUUID = () => {
+                    const uWgt = node.widgets ? node.widgets.find(w => w.name === "trix_uuid") : null;
+                    if (uWgt) {
+                        if (!uWgt.value || isUUIDInUse(uWgt.value, node)) {
+                            uWgt.value = generateTrixUUID();
+                        }
+                    }
+                };
+                initUUID();
+                setTimeout(initUUID, 100);
+
                 if (!node.title || node.title.toLowerCase().includes("load image aio")) {
                     node.title = TRIX_DISPLAY_TITLE;
                 }
@@ -590,7 +2108,7 @@ app.registerExtension({
                 node.maskColor = "#ff0000"; node.brushSize = 100; node.resizable = true;
                 node.brushHardness = 1.0; 
                 node.isEraser = false; node.history = []; node.historyIndex = -1; node.isPreviewHidden = false; node.isFullscreen = false; 
-                node._isMaskHidden = false; node._isToolbarHidden = false; node._lastImageName = null; node._lastMode = "Base"; node._isChangingImage = false;
+                node._isMaskHidden = false; node._isToolbarHidden = false; node._lastImageName = null; node._lastMode = "Preview"; node._isChangingImage = false;
                 node._fsZoom = 1.0; node._fsPanX = 0; node._fsPanY = 0;
                 node._lastClickPos = null; node._dragStartX = 0; node._dragStartY = 0; node._shiftLockAxis = null; node._wasShiftDrawing = false; 
                 node._isConfiguring = false;
@@ -598,8 +2116,12 @@ app.registerExtension({
                 node._originalImageForCrop = null;
                 
                 node._currentLiveUrl = null; 
+                node._loadingImageUrl = null; 
 
                 node._onVisChange = () => {
+                    if (typeof app !== "undefined" && app.graph && app.graph.getNodeById(node.id) !== node) {
+                        return;
+                    }
                     if (document.visibilityState === 'visible') {
                         if (node.syncMaskToCanvas) node.syncMaskToCanvas();
                         if (node.updateUIRef) node.updateUIRef();
@@ -676,13 +2198,15 @@ app.registerExtension({
 
 
                 node.pullLivePreviewRef = () => {
-                    if (!node.inputs) return;
-                    const inImageLink = node.inputs.find(inp => inp.name === "in_image");
-                    if (!inImageLink || inImageLink.link === null) {
+                    if (typeof app !== "undefined" && app.graph && app.graph.getNodeById(node.id) !== node) {
+                        return;
+                    }
+                    if (!trixIsInputWired(node)) {
                         node._currentLiveUrl = null;
                         return;
                     }
 
+                    const inImageLink = node.inputs.find(inp => inp && inp.name === "in_image");
                     const linkInfo = app.graph.links[inImageLink.link];
                     if (!linkInfo) return;
 
@@ -717,7 +2241,9 @@ app.registerExtension({
                     }
 
                     if (!imageUrl) {
-                        const safeId = String(node.id).replace(/[^a-zA-Z0-9_-]+/g, "_");
+                        const uWgt = node.widgets ? node.widgets.find(w => w.name === "trix_uuid") : null;
+                        const localUuid = uWgt ? uWgt.value : null;
+                        const safeId = localUuid ? String(localUuid).replace(/[^a-zA-Z0-9_-]+/g, "_") : String(node.id).replace(/[^a-zA-Z0-9_-]+/g, "_");
                         imageUrl = `/view?filename=aio_wired_${safeId}.png&type=input&subfolder=aio_input`;
                     }
 
@@ -733,6 +2259,13 @@ app.registerExtension({
                                 const ts = tsMatch ? tsMatch[1] : String(Date.now());
                                 
                                 const originalOnload = node.imgTagRef.onload;
+                                const originalOnerror = node.imgTagRef.onerror;
+                                
+                                const restoreHandlers = () => {
+                                    node.imgTagRef.onload = originalOnload;
+                                    node.imgTagRef.onerror = originalOnerror;
+                                };
+
                                 node.imgTagRef.onload = (e) => {
                                     if (originalOnload) originalOnload(e);
                                     
@@ -742,9 +2275,24 @@ app.registerExtension({
                                     node.syncMaskToCanvas();
                                     
                                     if (app.graph) app.graph.setDirtyCanvas(true, true);
-                                    node.imgTagRef.onload = originalOnload;
+                                    restoreHandlers();
                                 };
 
+                                node.imgTagRef.onerror = (e) => {
+                                    const imgWidget = node.widgets ? node.widgets.find(w => w.name === "image") : null;
+                                    if (imgWidget && imgWidget.value) {
+                                        let filename = imgWidget.value; let subfolder = ""; if (filename.includes("/")) { const parts = filename.split("/"); filename = parts.pop(); subfolder = parts.join("/"); }
+                                        const fallbackUrl = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}&t=${Date.now()}`;
+                                        if (node.imgTagRef.src !== fallbackUrl) {
+                                            node.imgTagRef.onerror = originalOnerror;
+                                            node.imgTagRef.src = fallbackUrl;
+                                            return;
+                                        }
+                                    }
+                                    restoreHandlers();
+                                };
+
+                                node._loadingImageUrl = null;
                                 node.imgTagRef.src = cleanNew + sep + 't=' + ts;
                             }
                         }
@@ -865,9 +2413,9 @@ app.registerExtension({
                     }
                     const cw = node.imgTagRef.naturalWidth;
                     const ch = node.imgTagRef.naturalHeight;
-                    const mode = widgets.mode ? widgets.mode.value : "Base";
+                    const mode = widgets.mode ? widgets.mode.value : "Preview";
                     
-                    if (mode === "Base") {
+                    if (mode === "Preview") {
                         node.resLabelRef.innerText = `${cw} x ${ch}`;
                         node.resLabelRef.style.cssText = "position: absolute; left: 0; right: 0; top: 0; bottom: 0; margin: auto; height: max-content; width: max-content; font-size: 10px; color: #d8d8dc; font-family: monospace; user-select: none; pointer-events: none; z-index: 5; text-align: center;";
                     } else if (mode === "Resize") {
@@ -880,7 +2428,7 @@ app.registerExtension({
                             const conditionWgt = findW("condition");
                             const condition = conditionWgt ? conditionWgt.value : "always";
                             const divWgt = findW("divisible_by");
-                            const divisible_by = divWgt ? parseInt(divWgt.value) : 2;
+                            const divisible_by = divWgt ? parseInt(divWgt.value) : 8;
 
                             if (kp === "pad_for_outpainting") {
                                 const pl = findW("pad_left") ? parseInt(findW("pad_left").value) : 0;
@@ -976,14 +2524,14 @@ app.registerExtension({
                     const wEnableResize = getW("enable_resize");
                     if (wEnableResize && node._checkboxEnableResize) {
                         node._checkboxEnableResize.checked = !!wEnableResize.value;
-                        node._trackEnableResize.style.backgroundColor = wEnableResize.value ? "rgb(246, 103, 68)" : "#111";
+                        node._trackEnableResize.style.backgroundColor = wEnableResize.value ? TRIX_ACTIVE : "#111";
                         node._circleEnableResize.style.transform = wEnableResize.value ? "translateX(16px)" : "translateX(0)";
                     }
 
                     const wCREnable = getW("cr_enable");
                     if (wCREnable && node._checkboxCREnable) {
                         node._checkboxCREnable.checked = !!wCREnable.value;
-                        node._trackCREnable.style.backgroundColor = wCREnable.value ? "rgb(246, 103, 68)" : "#111";
+                        node._trackCREnable.style.backgroundColor = wCREnable.value ? TRIX_ACTIVE : "#111";
                         node._circleCREnable.style.transform = wCREnable.value ? "translateX(16px)" : "translateX(0)";
                     }
 
@@ -1019,7 +2567,7 @@ app.registerExtension({
                 };
 
                 const wrapper = document.createElement("div"); node.wrapperRef = wrapper; 
-                wrapper.style.cssText = `position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; background: transparent; box-sizing: border-box; padding: 4px 0px; gap: 4px; pointer-events: auto; user-select: none; -webkit-user-select: none; overflow: visible;`;
+                wrapper.style.cssText = `position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; background: transparent; box-sizing: border-box; padding: 4px 0px; gap: 4px; pointer-events: auto; user-select: none; -webkit-user-select: none; overflow: hidden;`;
                 wrapper.addEventListener("contextmenu", (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1089,13 +2637,13 @@ app.registerExtension({
 
                     if (isInteractive || isScrollbar) return; 
 
-                    const mode = widgets.mode ? widgets.mode.value : "Base";
+                    const mode = widgets.mode ? widgets.mode.value : "Preview";
 
                     if (mode === "Mask" && (e.target === maskCanvas || e.target === imgTag)) {
                         return; 
                     }
 
-                    if ((mode === "Base" || mode === "Resize") && e.button === 0 && !e.altKey && !e.ctrlKey && !e.shiftKey) {
+                    if ((mode === "Preview" || mode === "Filter" || mode === "Resize") && e.button === 0 && !e.altKey && !e.ctrlKey && !e.shiftKey) {
                         isCustomNodeDragging = true;
                         customDragStartNodePos = [...node.pos];
                         customDragStartMousePos = [e.clientX, e.clientY];
@@ -1140,7 +2688,7 @@ app.registerExtension({
                 });
 
                 const headerContainer = document.createElement("div");
-                headerContainer.style.cssText = `display: flex; flex-direction: column; width: 100%; pointer-events: auto; z-index: 10; margin-top: ${TRIX_HEADER_OFFSET_Y}px; box-sizing: border-box; background: ${TRIX_BG};`;
+                headerContainer.style.cssText = `display: flex; flex-direction: column; width: 100%; pointer-events: auto; z-index: 10; margin-top: ${TRIX_HEADER_OFFSET_Y}px; box-sizing: border-box; background: var(--trix-bg);`;
                 node.headerContainerRef = headerContainer;
 
                 const imageChoices = () => {
@@ -1198,36 +2746,42 @@ app.registerExtension({
 
                 const filePanel = document.createElement("div");
                 filePanel.className = "trix-file-panel";
-                filePanel.style.cssText = `display: flex; flex-direction: column; gap: 6px; width: 100%; background: ${TRIX_BG}; padding: 4px 6px; box-sizing: border-box; border-radius: 6px 6px 0 0; border-bottom: 1px solid ${TRIX_CONTROL}; position: relative; isolation: isolate;`;
+                filePanel.style.cssText = `display: flex; flex-direction: column; gap: 6px; width: 100%; background: var(--trix-bg); padding: 4px 6px; box-sizing: border-box; border-radius: 6px 6px 0 0; border-bottom: 1px solid var(--trix-control); position: relative; isolation: isolate;`;
 
                 const filePanelTopShield = document.createElement("div");
-                filePanelTopShield.style.cssText = `position: absolute; left: 0; right: 0; top: -4px; height: 4px; background: ${TRIX_BG}; border-radius: 6px 6px 0 0; pointer-events: none; z-index: 0;`;
+                filePanelTopShield.className = "trix-file-panel-top-shield";
+                filePanelTopShield.style.cssText = `position: absolute; left: 0; right: 0; top: -4px; height: 4px; background: var(--trix-bg); border-radius: 6px 6px 0 0; pointer-events: none; z-index: 0;`;
 
                 const pickerRow = document.createElement("div");
                 pickerRow.style.cssText = "display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; gap: 4px; align-items: center; width: 100%; position: relative; z-index: 1;";
 
-                const pickerBtnStyle = `height: 22px; border: 1px solid ${TRIX_BORDER}; border-radius: 5px; background: ${TRIX_CONTROL}; color: ${TRIX_TEXT}; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1; transition: 0.15s;`;
+                const pickerBtnStyle = `height: 22px; border: 1px solid var(--trix-border); border-radius: 5px; background: var(--trix-control); color: var(--trix-icon); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1; transition: 0.15s;`;
                 const prevImageBtn = document.createElement("button");
                 prevImageBtn.innerHTML = svgChevronLeft;
                 prevImageBtn.title = "Previous image";
                 prevImageBtn.style.cssText = pickerBtnStyle;
+                prevImageBtn.onmouseenter = () => { prevImageBtn.style.background = "var(--trix-control-hover)"; prevImageBtn.style.color = "var(--trix-text)"; };
+                prevImageBtn.onmouseleave = () => { prevImageBtn.style.background = "var(--trix-control)"; prevImageBtn.style.color = "var(--trix-icon)"; };
+
                 const nextImageBtn = document.createElement("button");
                 nextImageBtn.innerHTML = svgChevronRight;
                 nextImageBtn.title = "Next image";
                 nextImageBtn.style.cssText = pickerBtnStyle;
+                nextImageBtn.onmouseenter = () => { nextImageBtn.style.background = "var(--trix-control-hover)"; nextImageBtn.style.color = "var(--trix-text)"; };
+                nextImageBtn.onmouseleave = () => { nextImageBtn.style.background = "var(--trix-control)"; nextImageBtn.style.color = "var(--trix-icon)"; };
 
                 const imageSelect = document.createElement("select");
                 imageSelect.title = "Selected image";
-                imageSelect.style.cssText = `height: 22px; width: 100%; min-width: 0; background: ${TRIX_CONTROL}; color: ${TRIX_TEXT}; border: 1px solid ${TRIX_BORDER}; border-radius: 5px; padding: 0 8px; font-size: 11px; font-family: var(--comfy-font-family, sans-serif); outline: none; cursor: pointer; box-sizing: border-box;`;
+                imageSelect.style.cssText = `height: 22px; width: 100%; min-width: 0; background: var(--trix-control); color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 5px; padding: 0 8px; font-size: 11px; font-family: var(--comfy-font-family, sans-serif); outline: none; cursor: pointer; box-sizing: border-box;`;
 
                 const uploadRow = document.createElement("div");
                 uploadRow.style.cssText = "display: grid; grid-template-columns: 1fr; width: 100%; position: relative; z-index: 1;";
 
                 const uploadBtn = document.createElement("button");
                 uploadBtn.innerHTML = `${svgUpload}<span>Upload Image</span>`;
-                uploadBtn.style.cssText = `height: 20px; width: 100%; background: ${TRIX_ACCENT}; color: #fff; border: 1px solid rgba(255,255,255,0.12); border-radius: 5px; cursor: pointer; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 2px rgba(0,0,0,0.35); transition: 0.15s ease;`;
-                uploadBtn.onmouseenter = () => { uploadBtn.style.background = TRIX_ACCENT_HOVER; };
-                uploadBtn.onmouseleave = () => { uploadBtn.style.background = TRIX_ACCENT; };
+                uploadBtn.style.cssText = `height: 20px; width: 100%; background: var(--trix-accent); color: var(--trix-text); border: none; border-radius: 5px; cursor: pointer; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: none; transition: 0.15s ease;`;
+                uploadBtn.onmouseenter = () => { uploadBtn.style.background = "var(--trix-accent-hover)"; };
+                uploadBtn.onmouseleave = () => { uploadBtn.style.background = "var(--trix-accent)"; };
                 node._uploadBtnRef = uploadBtn;
 
                 const fileInput = document.createElement("input");
@@ -1410,23 +2964,30 @@ app.registerExtension({
                 };
 
                 const tabs = document.createElement("div");
-                tabs.style.cssText = `display: flex; gap: 4px; width: 100%; height: 22px; background: ${TRIX_PANEL_SOFT}; border-radius: 0; padding: 2px 6px; box-sizing: border-box; align-items: center;`;
+                tabs.style.cssText = `display: flex; gap: 4px; width: 100%; height: 22px; background: var(--trix-panel-soft); border-radius: 0; padding: 2px 6px; box-sizing: border-box; align-items: center;`;
                 const btnRef = {};
                 
                 let clickTimer = null; 
                 
-                ["Base", "Mask", "Resize"].forEach(m => {
-                    const btn = document.createElement("button"); btn.innerText = m.toUpperCase();
-                    btn.style.cssText = "flex: 1; margin: 0; cursor: pointer; background: rgba(255, 255, 255, 0.1); color: #fff; border: 1px solid transparent; border-radius: 4px; font-size: 10px; font-weight: 500; transition: 0.15s ease-in-out; display: flex; align-items: center; justify-content: center; text-align: center; white-space: nowrap; overflow: hidden; height: 100%; box-sizing: border-box; text-shadow: 0 1px 1px rgba(0,0,0,0.5);";
+                ["Preview", "Mask", "Filter", "Resize"].forEach(m => {
+                    const btn = document.createElement("button");
+                    if (m === "Preview") {
+                        btn.innerText = "☘";
+                        btn.title = "Preview Mode";
+                        btn.style.cssText = "flex: 0 0 18px; width: 18px; margin: 0; cursor: pointer; background: rgba(255, 255, 255, 0.1); color: #fff; border: 1px solid transparent; border-radius: 4px; font-size: 11px; font-weight: 500; transition: 0.15s ease-in-out; display: flex; align-items: center; justify-content: center; text-align: center; white-space: nowrap; overflow: hidden; height: 100%; box-sizing: border-box; text-shadow: 0 1px 1px rgba(0,0,0,0.5);";
+                    } else {
+                        btn.innerText = m.toUpperCase();
+                        btn.style.cssText = "flex: 1; margin: 0; cursor: pointer; background: rgba(255, 255, 255, 0.1); color: #fff; border: 1px solid transparent; border-radius: 4px; font-size: 10px; font-weight: 500; transition: 0.15s ease-in-out; display: flex; align-items: center; justify-content: center; text-align: center; white-space: nowrap; overflow: hidden; height: 100%; box-sizing: border-box; text-shadow: 0 1px 1px rgba(0,0,0,0.5);";
+                    }
                     
                     btn.onmouseenter = () => { 
                         const isEnableResize = (widgets.enable_resize && widgets.enable_resize.value);
                         const isCrEnabled = (widgets.cr_enable && widgets.cr_enable.value);
                         if(widgets.mode && widgets.mode.value !== m) {
                             if (m === "Resize" && isEnableResize) {
-                                btn.style.background = "rgb(255, 115, 80)";
-                            } else if (m === "Base" && isCrEnabled) {
-                                btn.style.background = "rgb(255, 115, 80)";
+                                btn.style.background = "var(--trix-active-hover)";
+                            } else if (m === "Filter" && isCrEnabled) {
+                                btn.style.background = "var(--trix-active-hover)";
                             } else {
                                 btn.style.background = "rgba(255, 255, 255, 0.4)";
                             }
@@ -1437,9 +2998,9 @@ app.registerExtension({
                         const isCrEnabled = (widgets.cr_enable && widgets.cr_enable.value);
                         if(widgets.mode && widgets.mode.value !== m) {
                             if (m === "Resize" && isEnableResize) {
-                                btn.style.background = "rgb(246, 103, 68)";
-                            } else if (m === "Base" && isCrEnabled) {
-                                btn.style.background = "rgb(246, 103, 68)";
+                                btn.style.background = "var(--trix-active)";
+                            } else if (m === "Filter" && isCrEnabled) {
+                                btn.style.background = "var(--trix-active)";
                             } else {
                                 btn.style.background = "rgba(255, 255, 255, 0.2)";
                             }
@@ -1473,12 +3034,10 @@ app.registerExtension({
                         if (widgets.mode && widgets.mode.value === m) {
                             if (m === "Mask") {
                                 openTrixMaskEditor(node);
-                            } else if (m === "Base") {
-                                node._showCameraRawMenu = !node._showCameraRawMenu;
-                                updateUI();
-                                if (app.graph) app.graph.setDirtyCanvas(true, true);
+                            } else if (m === "Filter") {
+                                openTrixCameraRawEditor(node);
                             } else if (m === "Resize") {
-                                const isWired = node.inputs && node.inputs.some(inp => inp && inp.name === "in_image" && inp.link !== null);
+                                const isWired = trixIsInputWired(node);
                                 if (isWired) {
                                     alert("Please disconnect the in_image cable (incoming image) to use the manual canvas editor.");
                                     return;
@@ -1491,11 +3050,11 @@ app.registerExtension({
                 });
 
                 const toolBar = document.createElement("div");
-                const TOOLBAR_HEIGHT_BASE_MASK = 26;
+                const TOOLBAR_HEIGHT_FILTER_MASK = 26;
                 const TOOLBAR_HEIGHT_RESIZE = 26;
                 const TOOLBAR_BG_DARK = TRIX_PANEL_SOFT;
                 const TOOLBAR_BG_LIGHT = TRIX_PANEL_SOFT;
-                toolBar.style.cssText = `display: grid; grid-template-columns: minmax(30px, 1fr) auto auto auto auto auto auto auto; gap: 4px; align-items: center; background: ${TRIX_PANEL_SOFT}; padding: 1px 6px 2px 6px; border: none; border-radius: 0; width: 100%; min-height: 26px; height: auto; box-sizing: border-box; overflow: hidden; position: relative;`;
+                toolBar.style.cssText = `display: grid; grid-template-columns: minmax(30px, 1fr) auto auto auto auto auto auto auto; gap: 4px; align-items: center; background: var(--trix-mask-toolbar-bg); padding: 1px 6px 2px 6px; border: none; border-radius: 0; width: 100%; min-height: 26px; height: auto; box-sizing: border-box; overflow: hidden; position: relative;`;
 
                 
                 const slidersContainer = document.createElement("div");
@@ -1507,11 +3066,11 @@ app.registerExtension({
                     
                     const slider = document.createElement("input"); 
                     slider.type = "range"; slider.min = min; slider.max = max; slider.value = val; 
-                    slider.style.cssText = `flex: 1; cursor: pointer; min-width: 10px; width: 100%; margin: 0; accent-color: ${TRIX_ACCENT};`; slider.title = title;
+                    slider.style.cssText = `flex: 1; cursor: pointer; min-width: 10px; width: 100%; margin: 0; accent-color: var(--trix-accent);`; slider.title = title;
                     
                     const num = document.createElement("input");
                     num.type = "number"; num.min = min; num.max = max; num.value = val;
-                    num.style.cssText = "width: 38px; background: rgba(0,0,0,0.5); border: 1px solid rgba(68,68,68,0.5); color: #fff; font-size: 10px; border-radius: 3px; text-align: center; display: none; box-sizing: border-box; flex-shrink: 0;";
+                    num.style.cssText = "width: 38px; background: rgba(0,0,0,0.5); border: 1px solid var(--trix-border); color: var(--trix-text); font-size: 10px; border-radius: 3px; text-align: center; display: none; box-sizing: border-box; flex-shrink: 0;";
                     
                     slider.addEventListener("mousedown", (e) => e.stopPropagation()); 
                     slider.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -1555,12 +3114,18 @@ app.registerExtension({
                     node._colorIdx = (node._colorIdx + 1) % colors.length; 
                     node.maskColor = colors[node._colorIdx]; 
                     colorPick.style.backgroundColor = node.maskColor; 
+                    if (node.maskCanvasRef) {
+                        recolorCanvas(node.maskCanvasRef, node.maskColor);
+                    }
                     if (app.graph) app.graph.setDirtyCanvas(true, true);
                 };
                 node.updateColorPickBgRef = () => {
                     if (node._colorIdx !== undefined) {
                         node.maskColor = colors[node._colorIdx];
                         colorPick.style.backgroundColor = node.maskColor;
+                        if (node.maskCanvasRef) {
+                            recolorCanvas(node.maskCanvasRef, node.maskColor);
+                        }
                         if (app.graph) app.graph.setDirtyCanvas(true, true);
                     }
                 };
@@ -1580,8 +3145,8 @@ app.registerExtension({
                     popup.id = "trix-visual-opacity-popup";
                     popup.style.cssText = `
                         position: fixed;
-                        background: ${TRIX_PANEL_SOFT};
-                        border: 1px solid #444;
+                        background: var(--trix-panel-soft);
+                        border: 1px solid var(--trix-border);
                         border-radius: 6px;
                         padding: 8px 10px;
                         display: flex;
@@ -1599,7 +3164,7 @@ app.registerExtension({
 
                     const title = document.createElement("div");
                     title.innerText = "Mask Alpha";
-                    title.style.cssText = "color: #ccc; font-size: 10px; font-weight: bold; font-family: sans-serif; user-select: none;";
+                    title.style.cssText = "color: var(--trix-icon); font-size: 10px; font-weight: bold; font-family: sans-serif; user-select: none;";
 
                     const row = document.createElement("div");
                     row.style.cssText = "display: flex; align-items: center; gap: 6px; width: 100%;";
@@ -1609,11 +3174,11 @@ app.registerExtension({
                     slider.min = "0";
                     slider.max = "100";
                     slider.value = Math.round(node._visualOpacityStandard * 100);
-                    slider.style.cssText = `flex: 1; cursor: pointer; min-width: 10px; width: 100%; margin: 0; accent-color: ${TRIX_ACCENT};`;
+                    slider.style.cssText = `flex: 1; cursor: pointer; min-width: 10px; width: 100%; margin: 0; accent-color: var(--trix-accent);`;
 
                     const valLabel = document.createElement("div");
                     valLabel.innerText = `${Math.round(node._visualOpacityStandard * 100)}%`;
-                    valLabel.style.cssText = "color: #fff; font-size: 10px; font-family: monospace; width: 28px; text-align: right; user-select: none;";
+                    valLabel.style.cssText = "color: var(--trix-text); font-size: 10px; font-family: monospace; width: 28px; text-align: right; user-select: none;";
 
                     const updateOpacity = (val) => {
                         node._visualOpacityStandard = val / 100;
@@ -1651,8 +3216,8 @@ app.registerExtension({
 
                 const createBtn = (iconSvg, hint) => {
                     const b = document.createElement("button"); b.innerHTML = iconSvg; b.title = hint;
-                    b.style.cssText = "position: relative; overflow: visible; background: rgba(42, 42, 47, 0.65); color: #ccc; border: 1px solid rgba(68, 68, 68, 0.5); border-radius: 4px; width: 18px; height: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; transition: 0.1s; flex-shrink: 0;";
-                    b.onmouseenter = () => { b.style.background = "rgba(58, 58, 64, 0.8)"; }; b.onmouseleave = () => { b.style.background = "rgba(42, 42, 47, 0.65)"; }; return b;
+                    b.style.cssText = "position: relative; overflow: visible; background: var(--trix-mask-toolbar-icon-bg); color: var(--trix-icon); border: 1px solid var(--trix-border); border-radius: 4px; width: 18px; height: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; transition: 0.1s; flex-shrink: 0;";
+                    b.onmouseenter = () => { b.style.background = "rgba(58, 58, 64, 0.8)"; }; b.onmouseleave = () => { b.style.background = "var(--trix-mask-toolbar-icon-bg)"; }; return b;
                 };
 
                 const svgEyeMask = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="${iconStyle}"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
@@ -1671,13 +3236,13 @@ app.registerExtension({
                 const eraserBtn = createBtn(svgEraserMask, "Eraser"); 
                 const clearBtn = createBtn(svgClearMask, "Clear");
 
-                eraserBtn.onmouseenter = () => { eraserBtn.style.background = node.isEraser ? "#3f8eb4" : "rgba(58, 58, 64, 0.8)"; }; 
-                eraserBtn.onmouseleave = () => { eraserBtn.style.background = node.isEraser ? "#33789a" : "rgba(42, 42, 47, 0.65)"; };
-                eraserBtn.onclick = () => { node.isEraser = !node.isEraser; eraserBtn.style.background = node.isEraser ? "#33789a" : "rgba(42, 42, 47, 0.65)"; eraserBtn.style.color = node.isEraser ? "#fff" : "#ccc"; };
+                eraserBtn.onmouseenter = () => { eraserBtn.style.background = node.isEraser ? "var(--trix-accent-hover)" : "rgba(58, 58, 64, 0.8)"; }; 
+                eraserBtn.onmouseleave = () => { eraserBtn.style.background = node.isEraser ? "var(--trix-accent)" : "var(--trix-mask-toolbar-icon-bg)"; };
+                eraserBtn.onclick = () => { node.isEraser = !node.isEraser; eraserBtn.style.background = node.isEraser ? "var(--trix-accent)" : "var(--trix-mask-toolbar-icon-bg)"; eraserBtn.style.color = node.isEraser ? "#fff" : "var(--trix-icon)"; };
 
                 const svgWandMask = `<svg viewBox="0 0 24 24" fill="currentColor" style="${iconStyle}"><path d="M12 2 C12 8.5 8.5 12 2 12 C8.5 12 12 15.5 12 22 C12 15.5 15.5 12 22 12 C15.5 12 12 8.5 12 2 Z"></path></svg>`;
                 const aiBtn = createBtn(svgWandMask, "Open Advanced Mask Editor");
-                aiBtn.style.borderColor = "#33789a";
+                aiBtn.style.borderColor = "var(--trix-accent)";
                 aiBtn.onclick = () => { openTrixMaskEditor(node); };
 
                 toolBar.append(slidersContainer, colorPick, toggleMaskBtn, undoBtn, redoBtn, eraserBtn, clearBtn, aiBtn);
@@ -1687,7 +3252,7 @@ app.registerExtension({
                 
                 const resizePanel = document.createElement("div");
                 resizePanel.className = "trix-resize-panel";
-                resizePanel.style.cssText = `display: none; flex-direction: column; width: 100%; height: 100%; padding: 4px 8px; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; pointer-events: auto; background: ${TRIX_PANEL_SOFT}; min-height: 0; border-radius: 0 0 6px 6px;`;
+                resizePanel.style.cssText = `display: none; flex-direction: column; width: 100%; height: 100%; padding: 4px 8px; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; pointer-events: auto; background: var(--trix-panel-soft); min-height: 0; border-radius: 0 0 6px 6px;`;
 
                 if (!document.getElementById("trix-clean-inputs")) {
                     const style = document.createElement("style");
@@ -1703,6 +3268,12 @@ app.registerExtension({
                         .trix-cr-panel::-webkit-scrollbar-track { background: transparent; }
                         .trix-cr-panel::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
                         .trix-cr-panel::-webkit-scrollbar-thumb:hover { background: #666; }
+
+                        /* Dynamic Node Colors customization overrides */
+                        .trix-file-panel { background: var(--trix-bg) !important; border-bottom: 1px solid var(--trix-control) !important; }
+                        .trix-file-panel-top-shield { background: var(--trix-bg) !important; }
+                        .trix-resize-panel { background: var(--trix-panel-soft) !important; }
+                        .trix-control-row { background: var(--trix-control) !important; border: 1px solid var(--trix-border) !important; }
                     `;
                     document.head.appendChild(style);
                 }
@@ -1710,11 +3281,12 @@ app.registerExtension({
                 const createToggleRow = (label, wgtName) => {
                     const wgt = getW(wgtName);
                     const row = document.createElement("div");
-                    row.style.cssText = `display: flex; flex-direction: row; align-items: center; justify-content: space-between; background: ${TRIX_CONTROL}; padding: 4px 8px; margin-bottom: 4px; border-radius: 4px; border: 1px solid ${TRIX_BORDER}; box-shadow: inset 0 1px 2px rgba(0,0,0,0.32); flex-shrink: 0; min-height: 26px;`;
+                    row.className = "trix-control-row";
+                    row.style.cssText = `display: flex; flex-direction: row; align-items: center; justify-content: space-between; background: var(--trix-control); padding: 4px 8px; margin-bottom: 4px; border-radius: 4px; border: 1px solid var(--trix-border); box-shadow: inset 0 1px 2px rgba(0,0,0,0.32); flex-shrink: 0; min-height: 26px;`;
 
                     const title = document.createElement("span");
                     title.innerText = label;
-                    title.style.cssText = "color: #e0e0e0; font-family: var(--comfy-font-family, sans-serif); font-size: 11px; font-weight: 500; text-shadow: 1px 1px 1px #000;";
+                    title.style.cssText = "color: var(--trix-text); font-family: var(--comfy-font-family, sans-serif); font-size: 11px; font-weight: 500; text-shadow: 1px 1px 1px #000;";
 
                     if (wgtName === "enable_resize" || wgtName === "cr_enable") {
                         title.style.fontWeight = "bold";
@@ -1729,7 +3301,7 @@ app.registerExtension({
                     checkbox.checked = wgt ? !!wgt.value : false;
 
                     const track = document.createElement("span");
-                    track.style.cssText = "position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: " + (checkbox.checked ? "rgb(246, 103, 68)" : "#111") + "; transition: .2s; border-radius: 18px; border: 1px solid #444; box-sizing: border-box;";
+                    track.style.cssText = "position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: " + (checkbox.checked ? "var(--trix-active)" : "#111") + "; transition: .2s; border-radius: 18px; border: 1px solid var(--trix-border); box-sizing: border-box;";
 
                     const circle = document.createElement("span");
                     circle.style.cssText = "position: absolute; content: ''; height: 12px; width: 12px; left: 2px; top: 2px; background-color: white; transition: .2s; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.5);" + (checkbox.checked ? " transform: translateX(16px);" : "");
@@ -1743,7 +3315,7 @@ app.registerExtension({
                     checkbox.onchange = (e) => {
                         const val = e.target.checked;
                         if (wgt) wgt.value = val;
-                        track.style.backgroundColor = val ? "rgb(246, 103, 68)" : "#111";
+                        track.style.backgroundColor = val ? "var(--trix-active)" : "#111";
                         circle.style.transform = val ? "translateX(16px)" : "translateX(0)";
                         
                         if (app.graph) app.graph.setDirtyCanvas(true, true);
@@ -1754,7 +3326,7 @@ app.registerExtension({
                     node._syncHTMLWithWidgets.push(() => {
                         if (wgt && wgt.value !== undefined) {
                             checkbox.checked = !!wgt.value;
-                            track.style.backgroundColor = checkbox.checked ? "rgb(246, 103, 68)" : "#111";
+                            track.style.backgroundColor = checkbox.checked ? "var(--trix-active)" : "#111";
                             circle.style.transform = checkbox.checked ? "translateX(16px)" : "translateX(0)";
                         }
                     });
@@ -1777,11 +3349,12 @@ app.registerExtension({
                 const createInputRow = (label, wgtName, type, optionsOrMinMax) => {
                     const wgt = getW(wgtName); 
                     const row = document.createElement("div");
-                    row.style.cssText = `display: flex; flex-direction: row; align-items: center; background: ${TRIX_CONTROL}; padding: 4px 8px; margin-bottom: 4px; border-radius: 4px; border: 1px solid ${TRIX_BORDER}; box-shadow: inset 0 1px 2px rgba(0,0,0,0.32); flex-shrink: 0; min-height: 26px;`;
+                    row.className = "trix-control-row";
+                    row.style.cssText = `display: flex; flex-direction: row; align-items: center; background: var(--trix-control); padding: 4px 8px; margin-bottom: 4px; border-radius: 4px; border: 1px solid var(--trix-border); box-shadow: inset 0 1px 2px rgba(0,0,0,0.32); flex-shrink: 0; min-height: 26px;`;
                     
                     const title = document.createElement("span");
                     title.innerText = label;
-                    title.style.cssText = "color: #e0e0e0; font-family: var(--comfy-font-family, sans-serif); font-size: 11px; font-weight: 500; text-shadow: 1px 1px 1px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 0 95px;";
+                    title.style.cssText = "color: var(--trix-text); font-family: var(--comfy-font-family, sans-serif); font-size: 11px; font-weight: 500; text-shadow: 1px 1px 1px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 85px;";
                     
                     row.append(title);
 
@@ -1799,7 +3372,7 @@ app.registerExtension({
                             if(node.updateDynamicVisibilityRef) node.updateDynamicVisibilityRef();
                             if(node.updateResLabelTextRef) node.updateResLabelTextRef();
                         };
-                        inputEl.style.cssText = "background: #000; color: #fff; border: 1px solid #444; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-family: var(--comfy-font-family, monospace); outline: none; flex: 1; min-width: 0; box-sizing: border-box; cursor: pointer;";
+                        inputEl.style.cssText = "background: #000; color: var(--trix-text); border: 1px solid var(--trix-border); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-family: var(--comfy-font-family, monospace); outline: none; flex: 1; min-width: 0; box-sizing: border-box; cursor: pointer;";
                         
                         node._syncHTMLWithWidgets.push(() => {
                             if (wgt && wgt.value !== undefined) {
@@ -1825,7 +3398,7 @@ app.registerExtension({
                         sliderEl.min = minVal;
                         sliderEl.max = maxVal;
                         sliderEl.value = startVal;
-                        sliderEl.style.cssText = "flex: 1; margin: 0 8px; min-width: 40px; cursor: pointer; accent-color: #33789a;";
+                        sliderEl.style.cssText = `flex: 1; margin: 0 6px; min-width: 15px; cursor: pointer; accent-color: var(--trix-accent);`;
                         
                         const inputEl = document.createElement("input");
                         inputEl.type = "number";
@@ -1833,7 +3406,7 @@ app.registerExtension({
                         inputEl.max = maxVal;
                         inputEl.value = startVal;
                         inputEl.className = "trix-num";
-                        inputEl.style.cssText = "background: #000; color: #fff; border: 1px solid #444; padding: 2px 4px; border-radius: 4px; font-size: 11px; font-family: var(--comfy-font-family, monospace); outline: none; width: 50px; box-sizing: border-box; cursor: pointer; text-align: right; flex-shrink: 0;";
+                        inputEl.style.cssText = "background: #000; color: var(--trix-text); border: 1px solid var(--trix-border); padding: 2px 4px; border-radius: 4px; font-size: 11px; font-family: var(--comfy-font-family, monospace); outline: none; width: 42px; box-sizing: border-box; cursor: pointer; text-align: right; flex-shrink: 0;";
                         
                         sliderEl.addEventListener("mousedown", (e) => e.stopPropagation());
                         sliderEl.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -1926,7 +3499,7 @@ app.registerExtension({
                 const createScaleByRow = () => {
                     const wgt = getW("scale_by");
                     const row = document.createElement("div");
-                    row.style.cssText = `display: none; flex-direction: column; gap: 6px; background: ${TRIX_CONTROL}; padding: 7px 8px; margin-bottom: 4px; border-radius: 4px; border: 1px solid ${TRIX_BORDER}; box-shadow: inset 0 1px 2px rgba(0,0,0,0.32); flex-shrink: 0;`;
+                    row.style.cssText = `display: none; flex-direction: column; gap: 6px; background: var(--trix-control); padding: 7px 8px; margin-bottom: 4px; border-radius: 4px; border: 1px solid var(--trix-border); box-shadow: inset 0 1px 2px rgba(0,0,0,0.32); flex-shrink: 0;`;
 
                     const presetRow = document.createElement("div");
                     presetRow.style.cssText = "display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px;";
@@ -1937,7 +3510,7 @@ app.registerExtension({
                     customInput.max = "64";
                     customInput.step = "0.01";
                     customInput.className = "trix-num";
-                    customInput.style.cssText = `height: 24px; background: ${TRIX_BG}; color: ${TRIX_TEXT}; border: 1px solid ${TRIX_BORDER}; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-family: var(--comfy-font-family, monospace); outline: none; width: 100%; box-sizing: border-box; cursor: pointer; text-align: center;`;
+                    customInput.style.cssText = `height: 24px; background: var(--trix-bg); color: var(--trix-text); border: 1px solid var(--trix-border); padding: 2px 8px; border-radius: 5px; font-size: 11px; font-family: var(--comfy-font-family, monospace); outline: none; width: 100%; box-sizing: border-box; cursor: pointer; text-align: center;`;
 
                     const normalizeScale = (val) => {
                         let parsed = parseFloat(val);
@@ -1958,9 +3531,9 @@ app.registerExtension({
                         customInput.value = formatScale(normalized);
                         buttons.forEach((btn) => {
                             const active = Math.abs(parseFloat(btn.dataset.scale) - normalized) < 0.001;
-                            btn.style.background = active ? TRIX_ACCENT : TRIX_BG;
-                            btn.style.color = active ? "#fff" : TRIX_TEXT;
-                            btn.style.borderColor = active ? TRIX_ACCENT : TRIX_BORDER;
+                            btn.style.background = active ? "var(--trix-accent)" : "var(--trix-bg)";
+                            btn.style.color = active ? "#fff" : "var(--trix-text)";
+                            btn.style.borderColor = active ? "var(--trix-accent)" : "var(--trix-border)";
                         });
                         if (!silent && app.graph) app.graph.setDirtyCanvas(true, true);
                         if (!silent && node.updateResLabelTextRef) node.updateResLabelTextRef();
@@ -1971,7 +3544,7 @@ app.registerExtension({
                         btn.type = "button";
                         btn.dataset.scale = String(scale);
                         btn.textContent = `${scale}x`;
-                        btn.style.cssText = `height: 24px; background: ${TRIX_BG}; color: ${TRIX_TEXT}; border: 1px solid ${TRIX_BORDER}; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 700; transition: 0.15s;`;
+                        btn.style.cssText = `height: 24px; background: var(--trix-bg); color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 700; transition: 0.15s;`;
                         btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); setScale(scale); };
                         buttons.push(btn);
                         presetRow.appendChild(btn);
@@ -2018,15 +3591,15 @@ app.registerExtension({
                     };
                     
                     btn.innerHTML = `<span style="font-size: 11px; font-weight: 500;">Crop Position: ${formatVal(wgt ? wgt.value : "center")}</span>${svgChevron}`;
-                    btn.style.cssText = `background: ${TRIX_CONTROL}; color: #ccc; border: 1px solid ${TRIX_BORDER}; border-radius: 4px; padding: 4px 8px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; width: 100%; transition: 0.2s; box-sizing: border-box; min-height: 26px;`;
+                    btn.style.cssText = `background: var(--trix-control); color: var(--trix-icon); border: 1px solid var(--trix-border); border-radius: 4px; padding: 4px 8px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; width: 100%; transition: 0.2s; box-sizing: border-box; min-height: 26px;`;
                     
-                    btn.onmouseenter = () => { btn.style.background = "#333a45"; btn.style.color = "#fff"; };
-                    btn.onmouseleave = () => { btn.style.background = TRIX_CONTROL; btn.style.color = "#ccc"; };
+                    btn.onmouseenter = () => { btn.style.background = "var(--trix-control-hover)"; btn.style.color = "var(--trix-text)"; };
+                    btn.onmouseleave = () => { btn.style.background = "var(--trix-control)"; btn.style.color = "var(--trix-icon)"; };
 
                     const dropdown = document.createElement("div");
                     dropdown.style.cssText = `
                         position: fixed; z-index: 10000000;
-                        background: #151515; border: 1px solid #444; border-radius: 6px; 
+                        background: var(--trix-bg); border: 1px solid var(--trix-border); border-radius: 6px; 
                         display: none; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px;
                         box-shadow: 0 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;
                         width: 120px; aspect-ratio: 1;
@@ -2061,7 +3634,7 @@ app.registerExtension({
                         gridButtons.forEach(b => {
                             const isAct = b.getAttribute("data-id") === activeId;
                             b.setAttribute("data-active", isAct ? "true" : "false");
-                            b.style.background = isAct ? "#33789a" : "#2a2a2f";
+                            b.style.background = isAct ? "var(--trix-accent)" : "var(--trix-control)";
                         });
                     };
 
@@ -2076,21 +3649,21 @@ app.registerExtension({
                         const item = document.createElement("button");
                         item.title = opt.displayLabel || opt.label;
                         item.setAttribute("data-id", opt.id);
-                        item.style.cssText = "background: #2a2a2f; border: 1px solid #444; border-radius: 4px; cursor: pointer; transition: 0.15s; aspect-ratio: 1; width: 100%; box-sizing: border-box; padding: 0;";
+                        item.style.cssText = "background: var(--trix-control); border: 1px solid var(--trix-border); border-radius: 4px; cursor: pointer; transition: 0.15s; aspect-ratio: 1; width: 100%; box-sizing: border-box; padding: 0;";
                         gridButtons.push(item);
 
                         item.onmouseenter = () => {
                             const isActive = item.getAttribute("data-active") === "true";
                             if (!isActive) {
-                                item.style.background = "#333a45";
+                                item.style.background = "var(--trix-control-hover)";
                             }
                         };
                         item.onmouseleave = () => {
                             const isActive = item.getAttribute("data-active") === "true";
                             if (isActive) {
-                                item.style.background = "#33789a";
+                                item.style.background = "var(--trix-accent)";
                             } else {
-                                item.style.background = "#2a2a2f";
+                                item.style.background = "var(--trix-control)";
                             }
                         };
 
@@ -2263,13 +3836,13 @@ app.registerExtension({
                     const svCanvas = document.createElement("canvas");
                     svCanvas.width = 160;
                     svCanvas.height = 130;
-                    svCanvas.style.cssText = "border-radius: 4px; border: 1px solid #444; cursor: crosshair; flex: 1; min-width: 0;";
+                    svCanvas.style.cssText = "border-radius: 4px; border: 1px solid var(--trix-border); cursor: crosshair; flex: 1; min-width: 0;";
                     pickerContainer.appendChild(svCanvas);
 
                     const hueCanvas = document.createElement("canvas");
                     hueCanvas.width = 18;
                     hueCanvas.height = 130;
-                    hueCanvas.style.cssText = "border-radius: 4px; border: 1px solid #444; cursor: ns-resize; flex-shrink: 0;";
+                    hueCanvas.style.cssText = "border-radius: 4px; border: 1px solid var(--trix-border); cursor: ns-resize; flex-shrink: 0;";
                     pickerContainer.appendChild(hueCanvas);
 
                     popup.appendChild(pickerContainer);
@@ -2277,7 +3850,7 @@ app.registerExtension({
                     const textInput = document.createElement("input");
                     textInput.type = "text";
                     textInput.value = curHex;
-                    textInput.style.cssText = "background: #000; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-family: monospace; font-size: 11px; outline: none; width: 100%; box-sizing: border-box; text-align: center;";
+                    textInput.style.cssText = "background: var(--trix-control); color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 4px; padding: 4px 8px; font-family: monospace; font-size: 11px; outline: none; width: 100%; box-sizing: border-box; text-align: center;";
                     textInput.onchange = (e) => {
                         let val = e.target.value;
                         if (!val.startsWith("#")) val = "#" + val;
@@ -2293,9 +3866,9 @@ app.registerExtension({
                     const applyBtn = document.createElement("button");
                     applyBtn.type = "button";
                     applyBtn.innerText = "Apply";
-                    applyBtn.style.cssText = `background: #33789a; color: #fff; border: none; border-radius: 4px; padding: 6px; font-size: 11px; font-weight: bold; cursor: pointer; flex: 1; transition: 0.15s;`;
-                    applyBtn.onmouseenter = () => { applyBtn.style.background = "#3f8eb4"; };
-                    applyBtn.onmouseleave = () => { applyBtn.style.background = "#33789a"; };
+                    applyBtn.style.cssText = `background: var(--trix-accent); color: var(--trix-text); border: none; border-radius: 4px; padding: 6px; font-size: 11px; font-weight: bold; cursor: pointer; flex: 1; transition: 0.15s;`;
+                    applyBtn.onmouseenter = () => { applyBtn.style.background = "var(--trix-accent-hover)"; };
+                    applyBtn.onmouseleave = () => { applyBtn.style.background = "var(--trix-accent)"; };
                     applyBtn.onclick = (e) => {
                         e.preventDefault();
                         onApply(curHex);
@@ -2305,9 +3878,9 @@ app.registerExtension({
                     const cancelBtn = document.createElement("button");
                     cancelBtn.type = "button";
                     cancelBtn.innerText = "Cancel";
-                    cancelBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 6px; font-size: 11px; cursor: pointer; flex: 1; transition: 0.15s;";
-                    cancelBtn.onmouseenter = () => { cancelBtn.style.background = "#333a45"; cancelBtn.style.color = "#fff"; };
-                    cancelBtn.onmouseleave = () => { cancelBtn.style.background = "#2a2a2f"; cancelBtn.style.color = "#ccc"; };
+                    cancelBtn.style.cssText = "background: var(--trix-control); color: var(--trix-icon); border: 1px solid var(--trix-border); border-radius: 4px; padding: 6px; font-size: 11px; cursor: pointer; flex: 1; transition: 0.15s;";
+                    cancelBtn.onmouseenter = () => { cancelBtn.style.background = "var(--trix-control-hover)"; cancelBtn.style.color = "var(--trix-text)"; };
+                    cancelBtn.onmouseleave = () => { cancelBtn.style.background = "var(--trix-control)"; cancelBtn.style.color = "var(--trix-icon)"; };
                     cancelBtn.onclick = (e) => {
                         e.preventDefault();
                         popup.remove();
@@ -2497,12 +4070,12 @@ app.registerExtension({
 
                         const letter = document.createElement("span");
                         letter.innerText = sideLetter;
-                        letter.style.cssText = "position: absolute; left: 8px; color: #888; font-weight: bold; font-family: monospace; font-size: 11px; user-select: none; pointer-events: none;";
+                        letter.style.cssText = "position: absolute; left: 8px; color: var(--trix-icon); font-weight: bold; font-family: monospace; font-size: 11px; user-select: none; pointer-events: none;";
 
                         const input = document.createElement("input");
                         input.type = "number";
                         input.value = wgt ? wgt.value : 0;
-                        input.style.cssText = "background: #000; color: #fff; border: 1px solid #444; border-radius: 4px; width: 100%; height: 26px; box-sizing: border-box; text-align: center; font-family: monospace; font-size: 11px; outline: none; padding-left: 16px; padding-right: 4px;";
+                        input.style.cssText = "background: #000; color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 4px; width: 100%; height: 26px; box-sizing: border-box; text-align: center; font-family: monospace; font-size: 11px; outline: none; padding-left: 16px; padding-right: 4px;";
                         input.className = "trix-num";
 
                         input.onchange = (e) => {
@@ -2585,9 +4158,9 @@ app.registerExtension({
                     resetBtn.type = "button";
                     resetBtn.title = "Reset Padding";
                     resetBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><polyline points="3 3 3 8 8 8"></polyline></svg>`;
-                    resetBtn.style.cssText = "background: #2a2a2f; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; box-sizing: border-box; transition: 0.2s;";
-                    resetBtn.onmouseenter = () => { resetBtn.style.background = "#333a45"; resetBtn.style.color = "#fff"; };
-                    resetBtn.onmouseleave = () => { resetBtn.style.background = "#2a2a2f"; resetBtn.style.color = "#ccc"; };
+                    resetBtn.style.cssText = "background: var(--trix-control); color: var(--trix-icon); border: 1px solid var(--trix-border); border-radius: 4px; padding: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; box-sizing: border-box; transition: 0.2s;";
+                    resetBtn.onmouseenter = () => { resetBtn.style.background = "var(--trix-control-hover)"; resetBtn.style.color = "var(--trix-text)"; };
+                    resetBtn.onmouseleave = () => { resetBtn.style.background = "var(--trix-control)"; resetBtn.style.color = "var(--trix-icon)"; };
 
                     resetBtn.onclick = (e) => {
                         e.preventDefault();
@@ -2600,7 +4173,7 @@ app.registerExtension({
                     window.colorBtn = document.createElement("button");
                     colorBtn.type = "button";
                     colorBtn.title = "Pad Color";
-                    colorBtn.style.cssText = "border-radius: 4px; border: 1px solid #444; cursor: pointer; aspect-ratio: 1; width: 24px; height: 24px; box-sizing: border-box; padding: 0; transition: transform 0.1s;";
+                    colorBtn.style.cssText = "border-radius: 4px; border: 1px solid var(--trix-border); cursor: pointer; aspect-ratio: 1; width: 24px; height: 24px; box-sizing: border-box; padding: 0; transition: transform 0.1s;";
                     colorBtn.onmouseenter = () => { colorBtn.style.transform = "scale(1.1)"; };
                     colorBtn.onmouseleave = () => { colorBtn.style.transform = "scale(1.0)"; };
 
@@ -2663,11 +4236,11 @@ app.registerExtension({
                 
                 const openCPOBtn = document.createElement("button");
                 openCPOBtn.innerText = "Open CPO Editor";
-                openCPOBtn.style.cssText = "background: #33789a; color: #fff; border: none; border-radius: 4px; padding: 6px; margin-bottom: 6px; margin-top: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s; width: 100%; box-shadow: 0 1px 2px rgba(0,0,0,0.3);";
-                openCPOBtn.onmouseenter = () => { openCPOBtn.style.background = "#3f8eb4"; };
-                openCPOBtn.onmouseleave = () => { openCPOBtn.style.background = "#33789a"; };
+                openCPOBtn.style.cssText = `background: var(--trix-accent); color: var(--trix-text); border: none; border-radius: 4px; padding: 6px; margin-bottom: 6px; margin-top: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s; width: 100%; box-shadow: 0 1px 2px rgba(0,0,0,0.3);`;
+                openCPOBtn.onmouseenter = () => { openCPOBtn.style.background = "var(--trix-accent-hover)"; };
+                openCPOBtn.onmouseleave = () => { openCPOBtn.style.background = "var(--trix-accent)"; };
                 openCPOBtn.onclick = () => {
-                    const isWired = node.inputs && node.inputs.some(inp => inp && inp.name === "in_image" && inp.link !== null);
+                    const isWired = trixIsInputWired(node);
                     if (isWired) {
                         alert("Please disconnect the in_image cable (incoming image) to use the manual canvas editor.");
                         return;
@@ -2675,8 +4248,8 @@ app.registerExtension({
                     openTrixCropEditor(node, widgets.crop_data);
                 };
 
-                const widthRow = createInputRow("Width", "width", "number", [16, 8192, 1024]);
-                const heightRow = createInputRow("Height", "height", "number", [16, 8192, 1024]);
+                const widthRow = createInputRow("Width", "width", "number", [16, 16384, 1024]);
+                const heightRow = createInputRow("Height", "height", "number", [16, 16384, 1024]);
                 
                 const padLeftRow = createInputRow("Pad Left", "pad_left", "number", [0, 16384, 0]);
                 const padTopRow = createInputRow("Pad Top", "pad_top", "number", [0, 16384, 0]);
@@ -2689,7 +4262,7 @@ app.registerExtension({
                 const scaleByRow = createScaleByRow();
                 const conditionRow = createInputRow("Condition", "condition", "select", ["always", "downscale if bigger", "upscale if smaller", "if bigger area", "if smaller area"]);
                 const featherRow = createInputRow("Feathering", "feathering", "number", [0, 250, 0]);
-                const divisibleByRow = createInputRow("Divisible By", "divisible_by", "number", [1, 256, 2]);
+                const divisibleByRow = createInputRow("Divisible By", "divisible_by", "number", [1, 256, 8]);
 
                 resizePanel.append(
                     enableResizeRow,
@@ -2741,16 +4314,16 @@ app.registerExtension({
                 // ==========================================
                 const cameraRawPanel = document.createElement("div");
                 cameraRawPanel.className = "trix-resize-panel";
-                cameraRawPanel.style.cssText = `display: none; flex-direction: column; width: 100%; height: 100%; padding: 4px 8px; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; pointer-events: auto; background: ${TRIX_PANEL_SOFT}; min-height: 0;`;
+                cameraRawPanel.style.cssText = `display: none; flex-direction: column; width: 100%; height: 100%; padding: 4px 8px; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; pointer-events: auto; background: var(--trix-panel-soft); min-height: 0;`;
 
                 const crEnableRow = createToggleRow("Enable Settings", "cr_enable");
                 cameraRawPanel.appendChild(crEnableRow);
 
                 const openCRBtn = document.createElement("button");
                 openCRBtn.innerText = "Open Live Camera Raw";
-                openCRBtn.style.cssText = "background: #33789a; color: #fff; border: none; border-radius: 4px; padding: 6px; margin-bottom: 6px; margin-top: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s; width: 100%; box-shadow: 0 1px 2px rgba(0,0,0,0.3);";
-                openCRBtn.onmouseenter = () => { openCRBtn.style.background = "#3f8eb4"; };
-                openCRBtn.onmouseleave = () => { openCRBtn.style.background = "#33789a"; };
+                openCRBtn.style.cssText = `background: var(--trix-accent); color: var(--trix-text); border: none; border-radius: 4px; padding: 6px; margin-bottom: 6px; margin-top: 4px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s; width: 100%; box-shadow: 0 1px 2px rgba(0,0,0,0.3);`;
+                openCRBtn.onmouseenter = () => { openCRBtn.style.background = "var(--trix-accent-hover)"; };
+                openCRBtn.onmouseleave = () => { openCRBtn.style.background = "var(--trix-accent)"; };
                 openCRBtn.onclick = () => {
                     openTrixCameraRawEditor(node);
                 };
@@ -2758,11 +4331,11 @@ app.registerExtension({
 
                 const hslStatusBtn = document.createElement("button");
                 hslStatusBtn.innerText = "Hue/Saturation: Inactive";
-                hslStatusBtn.style.cssText = "background: transparent; color: #555; border: 1px solid #333; border-radius: 4px; padding: 4px; font-size: 10px; font-weight: bold; width: 100%; pointer-events: none;";
+                hslStatusBtn.style.cssText = "background: transparent; color: var(--trix-icon); border: 1px solid var(--trix-border); border-radius: 4px; padding: 4px; font-size: 10px; font-weight: bold; width: 100%; pointer-events: none;";
 
                 const curveStatusBtn = document.createElement("button");
                 curveStatusBtn.innerText = "Curves: Inactive";
-                curveStatusBtn.style.cssText = "background: transparent; color: #555; border: 1px solid #333; border-radius: 4px; padding: 4px; font-size: 10px; font-weight: bold; width: 100%; pointer-events: none;";
+                curveStatusBtn.style.cssText = "background: transparent; color: var(--trix-icon); border: 1px solid var(--trix-border); border-radius: 4px; padding: 4px; font-size: 10px; font-weight: bold; width: 100%; pointer-events: none;";
 
                 const statusRow = document.createElement("div");
                 statusRow.style.cssText = "display: flex; gap: 6px; width: 100%; margin-bottom: 6px;";
@@ -2771,29 +4344,48 @@ app.registerExtension({
 
                 const rawGroups = [
                     [
-                        {id: 'cr_exp', label: 'Exposure', min:-150, max:150},
-                        {id: 'cr_cont', label: 'Contrast', min:-150, max:150},
-                        {id: 'cr_high', label: 'Highlights', min:-150, max:150},
-                        {id: 'cr_shad', label: 'Shadows', min:-150, max:150},
-                        {id: 'cr_white', label: 'Whites', min:-150, max:150},
-                        {id: 'cr_black', label: 'Blacks', min:-150, max:150}
+                        {id: 'cr_offset', label: 'Offset', min:-100, max:100, default:0},
+                        {id: 'cr_exp', label: 'Exposure', min:-200, max:200, default:0},
+                        {id: 'cr_cont', label: 'Contrast', min:-100, max:100, default:0},
+                        {id: 'cr_high', label: 'Highlights', min:-100, max:100, default:0},
+                        {id: 'cr_shad', label: 'Shadows', min:-100, max:100, default:0},
+                        {id: 'cr_white', label: 'Whites', min:-100, max:100, default:0},
+                        {id: 'cr_black', label: 'Blacks', min:-100, max:100, default:0}
                     ],
                     [
-                        {id: 'cr_temp', label: 'Temperature', min:-150, max:150},
-                        {id: 'cr_tint', label: 'Tint', min:-150, max:150},
-                        {id: 'cr_colorfulness', label: 'Colorfulness', min:-150, max:150},
-                        {id: 'cr_sat', label: 'Saturation', min:-100, max:100}
+                        {id: 'cr_temp', label: 'Temperature', min:-150, max:150, default:0},
+                        {id: 'cr_tint', label: 'Tint', min:-150, max:150, default:0},
+                        {id: 'cr_vibrance', label: 'Vibrance', min:-150, max:150, default:0},
+                        {id: 'cr_sat', label: 'Saturation', min:-100, max:100, default:0}
                     ],
                     [
-                        {id: 'cr_tex', label: 'Texture', min:-150, max:150},
-                        {id: 'cr_clar', label: 'Clarity', min:-150, max:150},
-                        {id: 'cr_dehz', label: 'Dehaze', min:-150, max:150},
-                        {id: 'cr_grain', label: 'Grain', min:0, max:150}
+                        {id: 'cr_tex', label: 'Texture', min:-200, max:200, default:0},
+                        {id: 'cr_clar', label: 'Clarity', min:-200, max:200, default:0},
+                        {id: 'cr_dehz', label: 'Dehaze', min:-150, max:150, default:0},
+                        {id: 'cr_sharp', label: 'Sharpening', min:0, max:150, default:0},
+                        {id: 'cr_denoise', label: 'Noise Reduction', min:0, max:150, default:0}
                     ],
                     [
-                        {id: 'cr_sharp', label: 'Sharpening', min:0, max:150},
-                        {id: 'cr_blur', label: 'Gaussian Blur', min:0, max:150},
-                        {id: 'cr_vignette', label: 'Vignette', min:0, max:150}
+                        {id: 'cr_blur', label: 'Gaussian Blur', min:0, max:150, default:0},
+                        {id: 'cr_surface_blur', label: 'Surface Blur', min:0, max:200, default:0},
+                        {id: 'cr_grain', label: 'Grain', min:0, max:150, default:0},
+                        {id: 'cr_vignette', label: 'Vignette', min:0, max:150, default:0}
+                    ],
+                    [
+                        {id: 'cr_sketch_kernel_size', label: 'Kernel Size', min:0, max:25, default:0},
+                        {id: 'cr_sketch_sigma', label: 'Sigma', min:0.1, max:5.0, step:0.05, default:1.4},
+                        {id: 'cr_sketch_k_sigma', label: 'K-Sigma', min:1.0, max:5.0, step:0.05, default:1.6},
+                        {id: 'cr_sketch_epsilon', label: 'Epsilon', min:-0.2, max:0.2, step:0.005, default:-0.03},
+                        {id: 'cr_sketch_phi', label: 'Phi', min:1.0, max:50.0, step:1.0, default:10.0},
+                        {id: 'cr_sketch_gamma', label: 'Gamma', min:0.0, max:1.0, step:0.005, default:1.0},
+                        {id: 'cr_sketch_color', label: 'Color Mode', type: 'combo', options: ['gray', 'rgb'], default: 'gray'}
+                    ],
+                    [
+                        {id: 'cr_pixel_colors', label: 'Colors', min:2, max:256, default:128},
+                        {id: 'cr_pixel_dot_size', label: 'Dot Size', min:0, max:32, default:0},
+                        {id: 'cr_pixel_outline', label: 'Outline Inflating', min:0, max:9, default:0},
+                        {id: 'cr_pixel_smoothing', label: 'Smoothing', min:0, max:10, default:0},
+                        {id: 'cr_pixel_algo', label: 'Algorithm', type: 'combo', options: ['kmeans', 'dithering', 'kmeans with dithering'], default: 'kmeans'}
                     ]
                 ];
 
@@ -2812,48 +4404,108 @@ app.registerExtension({
 
                         const title = document.createElement("span");
                         title.innerText = conf.label;
-                        title.style.cssText = "color: #bbb; font-family: var(--comfy-font-family, sans-serif); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 0 70px; cursor: pointer;";
-                        
-                        let startVal = (wgt && wgt.value !== undefined && wgt.value !== null) ? parseInt(wgt.value) : 0;
-                        if(isNaN(startVal)) startVal = 0;
-                        
-                        const sliderEl = document.createElement("input");
-                        sliderEl.type = "range"; sliderEl.min = conf.min; sliderEl.max = conf.max; sliderEl.value = startVal;
-                        sliderEl.style.cssText = "flex: 1; margin: 0 6px; min-width: 30px; cursor: pointer; height: 10px; accent-color: #33789a;"; 
-                        
-                        const inputEl = document.createElement("input");
-                        inputEl.type = "number"; inputEl.min = conf.min; inputEl.max = conf.max; inputEl.value = startVal;
-                        inputEl.className = "trix-num";
-                        inputEl.style.cssText = "background: #000; color: #fff; border: 1px solid #444; padding: 1px 2px; border-radius: 3px; font-size: 10px; font-family: var(--comfy-font-family, monospace); outline: none; width: 34px; box-sizing: border-box; cursor: pointer; text-align: center; flex-shrink: 0;";
-                        
-                        sliderEl.addEventListener("mousedown", (e) => e.stopPropagation());
-                        sliderEl.addEventListener("pointerdown", (e) => e.stopPropagation());
-                        inputEl.addEventListener("mousedown", (e) => e.stopPropagation());
-                        inputEl.addEventListener("pointerdown", (e) => e.stopPropagation());
+                        title.style.cssText = "color: var(--trix-icon); font-family: var(--comfy-font-family, sans-serif); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 0 75px; cursor: pointer;";
+                        row.appendChild(title);
 
-                        const updateVals = (val) => {
-                            let parsed = parseInt(val);
-                            if(isNaN(parsed)) parsed = 0;
-                            parsed = Math.max(conf.min, Math.min(conf.max, parsed));
-                            inputEl.value = parsed; sliderEl.value = parsed;
-                            if (wgt) wgt.value = parsed;
-                            if(app.graph) app.graph.setDirtyCanvas(true, true);
-                        };
-
-                        inputEl.onchange = (e) => updateVals(e.target.value);
-                        sliderEl.oninput = (e) => updateVals(e.target.value);
-
-                        const doReset = () => updateVals(0);
-                        sliderEl.ondblclick = doReset;
-                        title.ondblclick = doReset;
-
-                        node._syncHTMLWithWidgets.push(() => {
-                            if (wgt && wgt.value !== undefined && wgt.value !== null) {
-                                let parsed = parseInt(wgt.value);
-                                if (!isNaN(parsed)) { inputEl.value = parsed; sliderEl.value = parsed; }
+                        if (conf.type === 'combo') {
+                            const selectEl = document.createElement("select");
+                            selectEl.style.cssText = "flex: 1; margin: 0 6px; background: #222; color: var(--trix-text); border: 1px solid var(--trix-border); border-radius: 3px; font-size: 10px; font-family: var(--comfy-font-family, sans-serif); outline: none; padding: 1px 2px; cursor: pointer; height: 18px;";
+                            conf.options.forEach(opt => {
+                                const optEl = document.createElement("option");
+                                optEl.value = opt;
+                                optEl.innerText = opt;
+                                selectEl.appendChild(optEl);
+                            });
+                            
+                            let startVal = (wgt && wgt.value !== undefined && wgt.value !== null) ? wgt.value : conf.default;
+                            if (typeof startVal === "number") {
+                                if (startVal >= 0 && startVal < conf.options.length) {
+                                    startVal = conf.options[startVal];
+                                } else {
+                                    startVal = conf.default;
+                                }
                             }
-                        });
-                        row.append(title, sliderEl, inputEl);
+                            selectEl.value = startVal;
+
+                            selectEl.addEventListener("change", (e) => {
+                                if (wgt) wgt.value = e.target.value;
+                                if(app.graph) app.graph.setDirtyCanvas(true, true);
+                            });
+                            selectEl.addEventListener("mousedown", (e) => e.stopPropagation());
+                            selectEl.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                            node._syncHTMLWithWidgets.push(() => {
+                                if (wgt && wgt.value !== undefined && wgt.value !== null) {
+                                    let val = wgt.value;
+                                    if (typeof val === "number") {
+                                        if (val >= 0 && val < conf.options.length) {
+                                            val = conf.options[val];
+                                        } else {
+                                            val = conf.default;
+                                        }
+                                    }
+                                    selectEl.value = val;
+                                }
+                            });
+
+                            row.appendChild(selectEl);
+                            
+                            const spacer = document.createElement("div");
+                            spacer.style.cssText = "width: 34px; flex-shrink: 0;";
+                            row.appendChild(spacer);
+                        } else {
+                            let isFloat = typeof conf.step !== "undefined" && conf.step < 1.0;
+                            let startVal = (wgt && wgt.value !== undefined && wgt.value !== null) ? (isFloat ? parseFloat(wgt.value) : parseInt(wgt.value)) : 0;
+                            if(isNaN(startVal)) startVal = 0;
+                            
+                            const sliderEl = document.createElement("input");
+                            sliderEl.type = "range"; sliderEl.min = conf.min; sliderEl.max = conf.max; sliderEl.value = startVal;
+                            sliderEl.style.cssText = `flex: 1; margin: 0 6px; min-width: 30px; cursor: pointer; height: 10px; accent-color: var(--trix-accent);`; 
+                            if (typeof conf.step !== "undefined") sliderEl.step = conf.step;
+                            
+                            const inputEl = document.createElement("input");
+                            inputEl.type = "number"; inputEl.min = conf.min; inputEl.max = conf.max; inputEl.value = startVal;
+                            inputEl.className = "trix-num";
+                            inputEl.style.cssText = "background: #000; color: var(--trix-text); border: 1px solid var(--trix-border); padding: 1px 2px; border-radius: 3px; font-size: 10px; font-family: var(--comfy-font-family, monospace); outline: none; width: 48px; box-sizing: border-box; cursor: pointer; text-align: center; flex-shrink: 0;";
+                            if (typeof conf.step !== "undefined") inputEl.step = conf.step;
+                            
+                            sliderEl.addEventListener("mousedown", (e) => e.stopPropagation());
+                            sliderEl.addEventListener("pointerdown", (e) => e.stopPropagation());
+                            inputEl.addEventListener("mousedown", (e) => e.stopPropagation());
+                            inputEl.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+                            const updateVals = (val) => {
+                                let parsed = isFloat ? parseFloat(val) : parseInt(val);
+                                if(isNaN(parsed)) parsed = 0;
+                                parsed = Math.max(conf.min, Math.min(conf.max, parsed));
+                                if (isFloat) {
+                                    inputEl.value = parsed.toFixed(3).replace(/\.?0+$/, "");
+                                } else {
+                                    inputEl.value = parsed;
+                                }
+                                sliderEl.value = parsed;
+                                if (wgt) wgt.value = parsed;
+                                if(app.graph) app.graph.setDirtyCanvas(true, true);
+                            };
+
+                            inputEl.onchange = (e) => updateVals(e.target.value);
+                            sliderEl.oninput = (e) => updateVals(e.target.value);
+
+                            const doReset = () => updateVals(conf.default !== undefined ? conf.default : 0);
+                            sliderEl.ondblclick = doReset;
+                            title.ondblclick = doReset;
+
+                            node._syncHTMLWithWidgets.push(() => {
+                                if (wgt && wgt.value !== undefined && wgt.value !== null) {
+                                    let parsed = isFloat ? parseFloat(wgt.value) : parseInt(wgt.value);
+                                    if (!isNaN(parsed)) { 
+                                        inputEl.value = isFloat ? parsed.toFixed(3).replace(/\.?0+$/, "") : parsed; 
+                                        sliderEl.value = parsed; 
+                                    }
+                                }
+                            });
+                            row.append(sliderEl, inputEl);
+                        }
                         cameraRawPanel.appendChild(row);
                     });
                 });
@@ -2945,7 +4597,7 @@ app.registerExtension({
                     `;
                 };
 
-                maskCanvas.addEventListener("pointerenter", (e) => { const mode = widgets.mode ? widgets.mode.value : "Base"; if (mode === "Mask" && (!node.isPreviewHidden || node.isFullscreen)) { brushCursor.style.display = "block"; node._lastPointerEvent = e; } });
+                maskCanvas.addEventListener("pointerenter", (e) => { const mode = widgets.mode ? widgets.mode.value : "Preview"; if (mode === "Mask" && (!node.isPreviewHidden || node.isFullscreen)) { brushCursor.style.display = "block"; node._lastPointerEvent = e; } });
                 maskCanvas.addEventListener("pointerleave", () => { brushCursor.style.display = "none"; node._lastPointerEvent = null; });
 
                 node.onResize = function(size) {
@@ -2998,7 +4650,7 @@ app.registerExtension({
                             node.trixWidgetRef.element.style.setProperty("margin", "0px", "important");
                             node.trixWidgetRef.element.style.setProperty("padding", "0px 2px", "important");
                             node.trixWidgetRef.element.style.setProperty("box-sizing", "border-box", "important");
-                            node.trixWidgetRef.element.style.setProperty("overflow", "visible", "important");
+                            node.trixWidgetRef.element.style.setProperty("overflow", "hidden", "important");
                             node.trixWidgetRef.element.style.setProperty("border", "none", "important");
                             node.trixWidgetRef.element.style.setProperty("outline", "none", "important");
                             node.trixWidgetRef.element.style.setProperty("box-shadow", "none", "important");
@@ -3071,7 +4723,10 @@ app.registerExtension({
                     }
                     const restoreMaskPromise = node.syncMaskToCanvas ? node.syncMaskToCanvas() : Promise.resolve(false);
 
-                    if (node._isConfiguring) return; 
+                    if (node._isConfiguring) {
+                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                        return;
+                    } 
 
                     if (node._isChangingImage) {
                         restoreMaskPromise.then(() => {
@@ -3081,10 +4736,12 @@ app.registerExtension({
                             saveHistory(); 
                             node._isChangingImage = false;
                             if (app.graph) app.graph.setDirtyCanvas(true, true);
+                            updateUI();
                         });
                         return;
                     } 
                     if (app.graph) app.graph.setDirtyCanvas(true, true);
+                    updateUI();
                 };
 
                 const applyHistory = (idx) => { 
@@ -3146,7 +4803,7 @@ app.registerExtension({
                     try { maskCanvas.setPointerCapture(e.pointerId); } catch(err){}
                     node._lastPointerEvent = e;
                     
-                    const mode = widgets.mode ? widgets.mode.value : "Base"; if (mode !== "Mask") return;
+                    const mode = widgets.mode ? widgets.mode.value : "Preview"; if (mode !== "Mask") return;
 
                     if (node.history.length === 0 && node.saveHistoryRef) {
                         node.saveHistoryRef();
@@ -3228,7 +4885,7 @@ app.registerExtension({
                 };
 
                 maskCanvas.onpointermove = (e) => {
-                    const mode = widgets.mode ? widgets.mode.value : "Base"; if (mode !== "Mask") return;
+                    const mode = widgets.mode ? widgets.mode.value : "Preview"; if (mode !== "Mask") return;
                     node._lastPointerEvent = e;
                     if (isPanning) { node._fsPanX += e.movementX; node._fsPanY += e.movementY; applyZoomPan(); e.preventDefault(); e.stopPropagation(); return; }
                     
@@ -3339,16 +4996,25 @@ app.registerExtension({
                 window.addEventListener("pointerup", node._pointerUpHandler, { capture: true });
 
                 const updateUI = (forceReload = false) => {
-                    const mode = widgets.mode ? widgets.mode.value : "Base"; node._lastMode = mode;
-                    const isInImageConnected = node.inputs && node.inputs.some(inp => inp.name === "in_image" && inp.link !== null);
+                    if (typeof app !== "undefined" && app.graph && app.graph.getNodeById(node.id) !== node) {
+                        if (!node._isFirstLoad && !node._isConfiguring) {
+                            return;
+                        }
+                    }
+                    const mode = widgets.mode ? widgets.mode.value : "Preview"; node._lastMode = mode;
+                    const inImageInput = node.inputs ? node.inputs.find(slot => slot && slot.name === "in_image") : null;
+                    const willBeWired = inImageInput && inImageInput.link !== null && inImageInput.link !== undefined;
+                    const isInImageConnected = trixIsInputWired(node) || willBeWired;
                     const isResizeMode = mode === "Resize";
                     removeNativeUploadWidget();
 
-                    toolBar.style.minHeight = `${isResizeMode ? TOOLBAR_HEIGHT_RESIZE : TOOLBAR_HEIGHT_BASE_MASK}px`;
+                    toolBar.style.minHeight = `${isResizeMode ? TOOLBAR_HEIGHT_RESIZE : TOOLBAR_HEIGHT_FILTER_MASK}px`;
                     toolBar.style.padding = "1px 6px 2px 6px";
-                    toolBar.style.background = (mode === "Base" || mode === "Resize") ? TOOLBAR_BG_LIGHT : TOOLBAR_BG_DARK;
+                    toolBar.style.background = "var(--trix-panel-soft)";
 
                     if (filePanel) {
+                        filePanel.style.background = "var(--trix-bg)";
+                        filePanel.style.borderBottom = "1px solid var(--trix-control)";
                         filePanel.style.display = "flex";
                         if (node.refreshImagePickerRef) node.refreshImagePickerRef();
                         if (isInImageConnected) {
@@ -3359,6 +5025,21 @@ app.registerExtension({
                             filePanel.style.pointerEvents = "auto";
                         }
                     }
+                    if (filePanelTopShield) {
+                        filePanelTopShield.style.background = "var(--trix-bg)";
+                    }
+                    if (resizePanel) {
+                        resizePanel.style.background = "var(--trix-panel-soft)";
+                    }
+                    if (cameraRawPanel) {
+                        cameraRawPanel.style.background = "var(--trix-panel-soft)";
+                    }
+                    if (node.headerContainerRef) {
+                        node.headerContainerRef.style.background = "var(--trix-bg)";
+                    }
+                    if (tabs) {
+                        tabs.style.background = "var(--trix-panel-soft)";
+                    }
 
                     if (widgets.image) { 
                         hideWidget(widgets.image);
@@ -3367,30 +5048,30 @@ app.registerExtension({
                     Object.keys(btnRef).forEach(k => { 
                         let isSelected = (k === mode);
                         let bgColor = "transparent";
-                        let color = "#aaa";
+                        let color = "var(--trix-icon)";
 
                         const isEnableResize = (widgets.enable_resize && widgets.enable_resize.value);
                         const isCrEnabled = (widgets.cr_enable && widgets.cr_enable.value);
 
                         if (k === "Resize") {
                             if (isEnableResize) {
-                                bgColor = "rgb(246, 103, 68)";
-                                color = "#fff";
+                                bgColor = "var(--trix-active)";
+                                color = "var(--trix-text)";
                             } else {
-                                bgColor = isSelected ? "#33789a" : "rgba(255, 255, 255, 0.2)";
-                                color = "#fff";
+                                bgColor = isSelected ? "var(--trix-accent)" : "rgba(255, 255, 255, 0.2)";
+                                color = "var(--trix-text)";
                             }
-                        } else if (k === "Base") {
+                        } else if (k === "Filter") {
                             if (isCrEnabled) {
-                                bgColor = "rgb(246, 103, 68)";
-                                color = "#fff";
+                                bgColor = "var(--trix-active)";
+                                color = "var(--trix-text)";
                             } else {
-                                bgColor = isSelected ? "#33789a" : "rgba(255, 255, 255, 0.2)";
-                                color = "#fff";
+                                bgColor = isSelected ? "var(--trix-accent)" : "rgba(255, 255, 255, 0.2)";
+                                color = "var(--trix-text)";
                             }
                         } else {
-                            bgColor = isSelected ? "#33789a" : "rgba(255, 255, 255, 0.2)";
-                            color = "#fff";
+                            bgColor = isSelected ? "var(--trix-accent)" : "rgba(255, 255, 255, 0.2)";
+                            color = "var(--trix-text)";
                         }
 
                         btnRef[k].style.background = bgColor; 
@@ -3412,12 +5093,12 @@ app.registerExtension({
                         child.style.pointerEvents = showTools ? "auto" : "none";
                     });
 
-                    if (mode === "Mask") {
+                    if (mode === "Mask" || mode === "Filter") {
                         if (node.resLabelRef) node.resLabelRef.style.display = "none";
                     } else {
-                        if (node.resLabelRef && !node.isPreviewHidden && !node._showCameraRawMenu && !node.isFullscreen) {
+                        if (node.resLabelRef && !node.isPreviewHidden && !node.isFullscreen) {
                             node.resLabelRef.style.display = "flex";
-                            if (mode === "Base") {
+                            if (mode === "Preview") {
                                 node.resLabelRef.style.justifyContent = "center";
                             } else {
                                 node.resLabelRef.style.justifyContent = "flex-start";
@@ -3438,18 +5119,11 @@ app.registerExtension({
                         wrapper.style.position = "relative"; wrapper.style.top = "auto"; wrapper.style.left = "auto"; wrapper.style.transform = "none"; wrapper.style.width = "100%"; wrapper.style.height = "100%"; wrapper.style.zIndex = ""; wrapper.style.background = "transparent"; wrapper.style.padding = "4px 0px 2px 0px"; wrapper.style.borderRadius = "0"; applyNodeDomSideOutline(); 
                         resizePanel.style.width = "100%"; resizePanel.style.borderRight = "none";
 
-                    } else if (mode === "Base") {
+                    } else if (mode === "Filter") {
                         resizePanel.style.display = "none";
-                        
-                        if (node._showCameraRawMenu) {
-                            viewPort.style.display = "none";
-                            cameraRawPanel.style.display = "flex";
-                            bodyContainer.style.overflow = "hidden";
-                        } else {
-                            viewPort.style.display = "flex";
-                            cameraRawPanel.style.display = "none";
-                            bodyContainer.style.overflow = "visible";
-                        }
+                        viewPort.style.display = "none";
+                        cameraRawPanel.style.display = "flex";
+                        bodyContainer.style.overflow = "hidden";
                         
                         imgTag.style.opacity = "0";
                         maskCanvas.style.opacity = "0";
@@ -3460,7 +5134,28 @@ app.registerExtension({
                         wrapper.style.position = "relative"; wrapper.style.top = "auto"; wrapper.style.left = "auto"; wrapper.style.transform = "none"; wrapper.style.width = "100%"; wrapper.style.height = "100%"; wrapper.style.zIndex = ""; wrapper.style.background = "transparent"; wrapper.style.padding = "4px 0px 2px 0px"; wrapper.style.borderRadius = "0"; applyNodeDomSideOutline(); 
                         
                         viewPort.style.justifyContent = "center"; viewPort.style.overflow = "visible"; 
-                        if (node.resLabelRef) node.resLabelRef.style.display = (node.isPreviewHidden || node._showCameraRawMenu) ? "none" : "block";
+                        if (node.resLabelRef) node.resLabelRef.style.display = "none";
+                        
+                        hardnessRow.wrap.style.display = "none"; 
+                        if(node._sizeNum) node._sizeNum.style.display = "none";
+                        if(node._hardnessNum) node._hardnessNum.style.display = "none";
+
+                    } else if (mode === "Preview") {
+                        resizePanel.style.display = "none";
+                        viewPort.style.display = "flex";
+                        cameraRawPanel.style.display = "none";
+                        bodyContainer.style.overflow = "visible";
+                        
+                        imgTag.style.opacity = "0";
+                        maskCanvas.style.opacity = "0";
+                        
+                        if (wrapper.parentNode === document.body && node._domPlaceholder && node._domPlaceholder.parentNode) { node._domPlaceholder.parentNode.replaceChild(wrapper, node._domPlaceholder); }
+
+                        node.headerContainerRef.style.marginTop = `${TRIX_HEADER_OFFSET_Y}px`;
+                        wrapper.style.position = "relative"; wrapper.style.top = "auto"; wrapper.style.left = "auto"; wrapper.style.transform = "none"; wrapper.style.width = "100%"; wrapper.style.height = "100%"; wrapper.style.zIndex = ""; wrapper.style.background = "transparent"; wrapper.style.padding = "4px 0px 2px 0px"; wrapper.style.borderRadius = "0"; applyNodeDomSideOutline(); 
+                        
+                        viewPort.style.justifyContent = "center"; viewPort.style.overflow = "visible"; 
+                        if (node.resLabelRef) node.resLabelRef.style.display = node.isPreviewHidden ? "none" : "block";
                         
                         hardnessRow.wrap.style.display = "none"; 
                         if(node._sizeNum) node._sizeNum.style.display = "none";
@@ -3531,17 +5226,45 @@ app.registerExtension({
 
                     maskCanvas.style.pointerEvents = (mode === "Mask" && (!node.isPreviewHidden || node.isFullscreen)) ? "auto" : "none";
 
-                    const name = widgets.image ? widgets.image.value : null;
-                    if (name) {
-                        let filename = name; let subfolder = ""; if (name.includes("/")) { const parts = name.split("/"); filename = parts.pop(); subfolder = parts.join("/"); }
-                        const url = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}&t=${Date.now()}`;
-                        
-                        if (node._isConfiguring) {
-                            node._lastImageName = name;
-                            imgTag.src = url;
-                        } else if (forceReload || node._lastImageName !== name || !imgTag.src) { 
-                            node._lastImageName = name; 
-                            imgTag.src = url;
+                    if (isInImageConnected) {
+                        if (node.pullLivePreviewRef) node.pullLivePreviewRef();
+                    } else {
+                        const name = widgets.image ? widgets.image.value : null;
+                        if (name) {
+                            let filename = name; let subfolder = ""; if (name.includes("/")) { const parts = name.split("/"); filename = parts.pop(); subfolder = parts.join("/"); }
+                            const url = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=${encodeURIComponent(subfolder)}`;
+                            const finalUrl = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+                            
+                            const getQueryParam = (urlStr, param) => {
+                                if (!urlStr) return "";
+                                try {
+                                    const parsed = new URL(urlStr, window.location.origin);
+                                    return parsed.searchParams.get(param) || "";
+                                } catch(e) {
+                                    const match = new RegExp("[&?]" + param + "=([^&]+)").exec(urlStr);
+                                    return match ? decodeURIComponent(match[1]) : "";
+                                }
+                            };
+                            const currentFilename = getQueryParam(imgTag.src, "filename");
+                            const currentSubfolder = getQueryParam(imgTag.src, "subfolder");
+                            const isSameImage = (currentFilename === filename) && (currentSubfolder === subfolder);
+
+                            if (node._isConfiguring) {
+                                node._lastImageName = name;
+                                node._loadingImageUrl = finalUrl;
+                                imgTag.src = finalUrl;
+                            } else if (forceReload || node._lastImageName !== name || !imgTag.src || !isSameImage) { 
+                                node._lastImageName = name; 
+                                node._loadingImageUrl = finalUrl;
+                                const preImg = new Image();
+                                preImg.onload = () => {
+                                    if (node._loadingImageUrl === finalUrl) {
+                                        imgTag.src = finalUrl;
+                                        if (app.graph) app.graph.setDirtyCanvas(true, true);
+                                    }
+                                };
+                                preImg.src = finalUrl;
+                            }
                         }
                     }
 
@@ -3551,15 +5274,15 @@ app.registerExtension({
                     const isCurveOn = wCurveActive ? wCurveActive.value : false;
                     if (hslStatusBtn) {
                         hslStatusBtn.innerText = isHslOn ? "Hue/Saturation: Active" : "Hue/Saturation: Inactive";
-                        hslStatusBtn.style.background = isHslOn ? "rgb(246, 103, 68)" : "transparent";
-                        hslStatusBtn.style.color = isHslOn ? "#fff" : "#555";
-                        hslStatusBtn.style.borderColor = isHslOn ? "rgb(246, 103, 68)" : "#333";
+                        hslStatusBtn.style.background = isHslOn ? "var(--trix-active)" : "transparent";
+                        hslStatusBtn.style.color = isHslOn ? "var(--trix-text)" : "var(--trix-icon)";
+                        hslStatusBtn.style.borderColor = isHslOn ? "var(--trix-active)" : "var(--trix-border)";
                     }
                     if (curveStatusBtn) {
                         curveStatusBtn.innerText = isCurveOn ? "Curves: Active" : "Curves: Inactive";
-                        curveStatusBtn.style.background = isCurveOn ? "rgb(246, 103, 68)" : "transparent";
-                        curveStatusBtn.style.color = isCurveOn ? "#fff" : "#555";
-                        curveStatusBtn.style.borderColor = isCurveOn ? "rgb(246, 103, 68)" : "#333";
+                        curveStatusBtn.style.background = isCurveOn ? "var(--trix-active)" : "transparent";
+                        curveStatusBtn.style.color = isCurveOn ? "var(--trix-text)" : "var(--trix-icon)";
+                        curveStatusBtn.style.borderColor = isCurveOn ? "var(--trix-active)" : "var(--trix-border)";
                     }
                     
                     if (node.updateDynamicVisibilityRef) node.updateDynamicVisibilityRef();
@@ -3603,7 +5326,13 @@ app.registerExtension({
                             }).catch(e => console.error("TrixLoader Mask Intercept Error:", e));
                         } else {
                             node._baseImageName = currentVal; 
-                            setTimeout(() => { if (node.updateUIRef) node.updateUIRef(true); }, 50);
+                            if (node._imageCallbackTimer) {
+                                clearTimeout(node._imageCallbackTimer);
+                            }
+                            node._imageCallbackTimer = setTimeout(() => {
+                                node._imageCallbackTimer = null;
+                                if (node.updateUIRef) node.updateUIRef(true);
+                            }, 50);
                         }
                         if (node.refreshImagePickerRef) node.refreshImagePickerRef();
                     };
@@ -3634,11 +5363,12 @@ app.registerExtension({
                     const file = imageItem.getAsFile ? imageItem.getAsFile() : null;
                     if (!file) return;
 
-                    const filename = trixAioFilename("paste", node.id, file.name, imageItem.type || file.type);
+                    const localUuid = node.widgets ? node.widgets.find(w => w.name === "trix_uuid")?.value : null;
+                    const filename = trixAioFilename("paste", localUuid || node.id, file.name, imageItem.type || file.type);
                     const newFile = new File([file], filename, { type: file.type || imageItem.type || "image/png" });
                     const body = new FormData();
                     body.append("image", newFile, filename);
-                    trixAppendAioUploadFields(body);
+                    trixAppendAioUploadFields(body, filename);
 
                     try {
                         const resp = await fetch("/upload/image", { method: "POST", body: body });
@@ -3658,6 +5388,10 @@ app.registerExtension({
                 window.addEventListener("paste", pasteHandler, { capture: true });
                 document.addEventListener("paste", pasteHandler, { capture: true });
                 const onRemoved = node.onRemoved; node.onRemoved = function() { 
+                    if (typeof allTrixNodes !== "undefined") {
+                        const idx = allTrixNodes.indexOf(node);
+                        if (idx !== -1) allTrixNodes.splice(idx, 1);
+                    }
                     if (node.cropPositionDropdown) { node.cropPositionDropdown.remove(); }
                     if (wrapper.parentNode === document.body) { document.body.removeChild(wrapper); }
                     window.removeEventListener("paste", pasteHandler, true);
@@ -3688,25 +5422,10 @@ app.registerExtension({
 
             const origOnDrawForeground = nodeType.prototype.onDrawForeground;
             nodeType.prototype.onDrawForeground = function(ctx) {
+                this.boxcolor = "rgba(0,0,0,0)";
                 if (this.flags.collapsed) {
                     if (origOnDrawForeground) origOnDrawForeground.apply(this, arguments);
                     return;
-                }
-                if (!Object.getOwnPropertyDescriptor(this, "color") || Object.getOwnPropertyDescriptor(this, "color").get === undefined) {
-                    Object.defineProperty(this, "color", {
-                        get: function() { return TRIX_NODE_OUTLINE; },
-                        set: function(v) {},
-                        configurable: true,
-                        enumerable: true
-                    });
-                }
-                if (!Object.getOwnPropertyDescriptor(this, "bgcolor") || Object.getOwnPropertyDescriptor(this, "bgcolor").get === undefined) {
-                    Object.defineProperty(this, "bgcolor", {
-                        get: function() { return TRIX_BG; },
-                        set: function(v) {},
-                        configurable: true,
-                        enumerable: true
-                    });
                 }
                 if (origOnDrawForeground) origOnDrawForeground.apply(this, arguments);
 
@@ -3718,11 +5437,14 @@ app.registerExtension({
 
                 const titleHeight = (typeof LiteGraph !== "undefined" && LiteGraph.NODE_TITLE_HEIGHT) ? LiteGraph.NODE_TITLE_HEIGHT : 30;
                 const nodeRadius = (typeof LiteGraph !== "undefined" && Number.isFinite(LiteGraph.ROUND_RADIUS)) ? LiteGraph.ROUND_RADIUS : TRIX_NODE_RADIUS;
-                ctx.save();
-                ctx.strokeStyle = this._trixDropActive ? TRIX_ACCENT : TRIX_NODE_OUTLINE;
-                ctx.lineWidth = 1;
-                drawRoundedNodeStroke(ctx, 0.5, -titleHeight + 0.5, this.size[0] - 1, this.size[1] + titleHeight - 1, nodeRadius);
-                ctx.restore();
+                const w = TRIX_NODE_BORDER_WIDTH;
+                if (w > 0) {
+                    ctx.save();
+                    ctx.strokeStyle = this._trixDropActive ? TRIX_ACCENT : TRIX_NODE_OUTLINE;
+                    ctx.lineWidth = w;
+                    drawRoundedNodeStroke(ctx, w / 2, -titleHeight + w / 2, this.size[0] - w, this.size[1] + titleHeight - w, nodeRadius);
+                    ctx.restore();
+                }
                 
                 if (!this.flags.collapsed) {
                     ctx.save();
@@ -3745,7 +5467,15 @@ app.registerExtension({
                             }
                         }
                     } else {
-                        if (this.pullLivePreviewRef) this.pullLivePreviewRef();
+                        if (this.pullLivePreviewRef) {
+                            this.pullLivePreviewRef();
+                            const delayPull = () => {
+                                if (this.pullLivePreviewRef) this.pullLivePreviewRef();
+                            };
+                            setTimeout(delayPull, 100);
+                            setTimeout(delayPull, 300);
+                            setTimeout(delayPull, 600);
+                        }
                     }
                     refreshTrixOutputs(this);
                     if (this.updateUIRef) this.updateUIRef(); 
@@ -3754,6 +5484,12 @@ app.registerExtension({
 
             nodeType.prototype.onExecuted = function(message) {
                 const node = this;
+                node._currentLiveUrl = null;
+                
+                const localUuid = node.widgets ? node.widgets.find(w => w.name === "trix_uuid")?.value : null;
+                if (localUuid && message && message.trix_uuid !== localUuid) {
+                    return;
+                }
                 
                 let incomingMaskName = null;
                 if (message?.masks && message.masks.length > 0) {

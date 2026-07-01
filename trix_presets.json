@@ -1,0 +1,134 @@
+[
+  {
+    "name": "My Preset 2",
+    "state": {
+      "cr_offset": 0,
+      "cr_exp": -200,
+      "cr_cont": 0,
+      "cr_high": -150,
+      "cr_shad": 0,
+      "cr_white": -150,
+      "cr_black": 0,
+      "cr_temp": 150,
+      "cr_tint": 150,
+      "cr_vibrance": 147,
+      "cr_colorfulness": 0,
+      "cr_sat": 100,
+      "cr_tex": 0,
+      "cr_clar": 0,
+      "cr_dehz": 0,
+      "cr_sharp": 0,
+      "cr_denoise": 0,
+      "cr_blur": 0,
+      "cr_surface_blur": 0,
+      "cr_grain": 0,
+      "cr_vignette": 0,
+      "cr_sketch_kernel_size": 0,
+      "cr_sketch_sigma": 1.4,
+      "cr_sketch_k_sigma": 1.6,
+      "cr_sketch_epsilon": -0.03,
+      "cr_sketch_phi": 10,
+      "cr_sketch_gamma": 1,
+      "cr_sketch_color": "gray",
+      "cr_pixel_colors": 128,
+      "cr_pixel_dot_size": 0,
+      "cr_pixel_outline": 0,
+      "cr_pixel_smoothing": 0,
+      "cr_pixel_algo": "kmeans"
+    },
+    "hslState": {
+      "colorize": false,
+      "activeChannel": "master",
+      "master": {
+        "h": 0,
+        "s": 0,
+        "l": 0
+      },
+      "reds": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 0,
+        "width": 60
+      },
+      "yellows": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 60,
+        "width": 60
+      },
+      "greens": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 120,
+        "width": 60
+      },
+      "cyans": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 180,
+        "width": 60
+      },
+      "blues": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 240,
+        "width": 60
+      },
+      "magentas": {
+        "h": 0,
+        "s": 0,
+        "l": 0,
+        "center": 300,
+        "width": 60
+      }
+    },
+    "curvesState": {
+      "activeChannel": "rgb",
+      "rgb": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "r": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "g": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ],
+      "b": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 255,
+          "y": 255
+        }
+      ]
+    }
+  }
+]
