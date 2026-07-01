@@ -43,6 +43,12 @@ In v2.5, you can run all advanced editors on **any node** that produces or accep
   - *Copy Image / Paste Image / Copy Mask / Paste Mask*
 * **Mask Clipboard**: Instantly copy drawn masks from one node and paste them onto another node across the workflow.
 
+
+
+https://github.com/user-attachments/assets/b178e1b1-3e14-4e61-9a7f-dd1220b07add
+
+
+
 ---
 
 ## ⚙️ Advanced Editor Workspaces
