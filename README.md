@@ -45,7 +45,7 @@ In v2.5, you can run all advanced editors on **any node** that produces or accep
 
 
 
-https://github.com/user-attachments/assets/b178e1b1-3e14-4e61-9a7f-dd1220b07add
+https://github.com/user-attachments/assets/104f2d91-7eff-49ce-be35-f213e076017c
 
 
 
