@@ -214,10 +214,15 @@ You can fully customize the behavior and visual aesthetics of ComfyUI-TrixLoader
    ```
 3. Restart ComfyUI.
 
-### Method 2: Via ComfyUI Manager
-1. Open ComfyUI Manager -> click **Install via Git URL**.
-2. Paste the URL: `https://github.com/trx7111/ComfyUI-TrixLoader`
-3. Click Install and restart ComfyUI.
+### Method 2: Via ComfyUI Manager (Search or Git URL)
+* **Option A (Registry Search)**:
+  1. Open ComfyUI Manager -> click **Custom Nodes Manager**.
+  2. Search for `trixloader` or `ComfyUI-TrixLoader`.
+  3. Click **Install** and restart ComfyUI.
+* **Option B (Via Git URL)**:
+  1. Open ComfyUI Manager -> click **Install via Git URL**.
+  2. Paste the URL: `https://github.com/trx7111/ComfyUI-TrixLoader`
+  3. Click Install and restart ComfyUI.
 
 ---
 

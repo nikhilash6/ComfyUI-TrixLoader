@@ -132,7 +132,7 @@ let TRIX_PANEL_SOFT = "rgba(32, 32, 36, 0.92)";
 let TRIX_CONTROL = "#2e2e33";
 let TRIX_CONTROL_HOVER = "#393941";
 let TRIX_BORDER = "#424248";
-let TRIX_NODE_OUTLINE = "#35343c";
+let TRIX_NODE_OUTLINE = "#303540";
 let TRIX_NODE_RADIUS = 8;
 let TRIX_HEADER_OFFSET_Y = -5; // Custom image picker vertical offset. Change by 1-3px if old native lines peek through.
 let TRIX_TEXT = "#e7e7ea";
@@ -314,7 +314,7 @@ let settingContextMenuAdvCrop = { value: true };
 let settingContextMenuAdvCamraw = { value: true };
 
 let settingNodeBg = { value: "#202024" };
-let settingNodeBorder = { value: "#35343c" };
+let settingNodeBorder = { value: "#303540" };
 let settingButtonDefault = { value: "#33789a" };
 let settingButtonActive = { value: "#f66744" };
 
@@ -1042,7 +1042,7 @@ app.registerExtension({
 
         const updateColorSettings = () => {
             TRIX_BG = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .NodeBg", "#303540") || "#303540";
-            TRIX_NODE_OUTLINE = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .NodeBorder", "#35343c") || "#35343c";
+            TRIX_NODE_OUTLINE = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .NodeBorder", "#303540") || "#303540";
             TRIX_ACCENT = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .ButtonDefault", "#33789a") || "#33789a";
             TRIX_ACTIVE = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .ButtonActive", "#dd7055") || "#dd7055";
             TRIX_TEXT = app.ui.settings.getSettingValue("Trix AIO Tools.Trix Loader node color .TextColor", "#e7e7ea") || "#e7e7ea";
@@ -1108,7 +1108,7 @@ app.registerExtension({
         settingNodeBorder = app.ui.settings.addSetting({
             id: "Trix AIO Tools.Trix Loader node color .NodeBorder",
             name: "🎨 Customization Node Colors: Node Border (Hex)",
-            defaultValue: "#35343c",
+            defaultValue: "#303540",
             type: "text",
             onChange(val) {
                 updateColorSettings();
@@ -1209,7 +1209,7 @@ app.registerExtension({
         // Enhance Color Settings UI with a Palette Picker and Reset Button
         const TRIX_COLOR_DEFAULTS = {
             "Trix AIO Tools.Trix Loader node color .NodeBg": "#303540",
-            "Trix AIO Tools.Trix Loader node color .NodeBorder": "#35343c",
+            "Trix AIO Tools.Trix Loader node color .NodeBorder": "#303540",
             "Trix AIO Tools.Trix Loader node color .ButtonDefault": "#33789a",
             "Trix AIO Tools.Trix Loader node color .ButtonActive": "#dd7055",
             "Trix AIO Tools.Trix Loader node color .TextColor": "#e7e7ea",

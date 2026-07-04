@@ -214,10 +214,15 @@ https://github.com/user-attachments/assets/957ebd88-e6b7-466b-85b4-5d3849433f6a
    ```
 3. Перезапустите ComfyUI.
 
-### Метод 2: Через ComfyUI Manager
-1. Откройте ComfyUI Manager -> нажмите **Install via Git URL**.
-2. Вставьте ссылку: `https://github.com/trx7111/ComfyUI-TrixLoader`
-3. Нажмите Install и перезапустите ComfyUI.
+### Метод 2: Через ComfyUI Manager (Поиск по реестру или Git URL)
+* **Вариант А (Поиск в реестре)**:
+  1. Откройте ComfyUI Manager -> нажмите **Custom Nodes Manager**.
+  2. Введите в поиске `trixloader` или `ComfyUI-TrixLoader`.
+  3. Нажмите **Install** напротив ноды и перезапустите ComfyUI.
+* **Вариант Б (Через Git URL)**:
+  1. Откройте ComfyUI Manager -> нажмите **Install via Git URL**.
+  2. Вставьте ссылку: `https://github.com/trx7111/ComfyUI-TrixLoader`
+  3. Нажмите Install и перезапустите ComfyUI.
 
 ---
 
